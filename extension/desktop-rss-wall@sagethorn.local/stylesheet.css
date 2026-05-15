@@ -1,30 +1,51 @@
 /**
  * Desktop RSS Wall — Stylesheet
  *
- * Milestone 3: Base styles only.  Font, size, and color are now driven
- * by GSettings via inline styles in extension.js.
+ * Milestone 5: RSS panel with title, item list, and fallback states.
+ * Font family, size, and color are driven by GSettings via inline
+ * styles in extension.js.  This stylesheet provides structural
+ * defaults and text-shadow for readability over wallpaper/slideshow.
  */
 
 .desktop-rss-wall-root {
 }
 
-.desktop-rss-wall-title {
-    font-family: "DejaVu Sans", sans-serif;
-    font-size: 24px;
-    font-weight: bold;
-    color: #ffffff;
-    text-shadow: 0px 2px 6px rgba(0, 0, 0, 0.85);
+/* ── RSS Panel ─────────────────────────────────────────────────── */
+
+.desktop-rss-wall-rss-panel {
+    /* Background applied inline from GSettings */
 }
+
+.desktop-rss-wall-rss-box {
+    /* Vertical layout for title + items */
+}
+
+.desktop-rss-wall-rss-title {
+    font-weight: bold;
+    text-shadow: 0px 2px 6px rgba(0, 0, 0, 0.85);
+    margin-bottom: 6px;
+}
+
+.desktop-rss-wall-rss-item {
+    text-shadow: 0px 2px 6px rgba(0, 0, 0, 0.85);
+    margin-bottom: 2px;
+}
+
+.desktop-rss-wall-rss-fallback {
+    font-style: italic;
+    text-shadow: 0px 2px 6px rgba(0, 0, 0, 0.85);
+    opacity: 0.7;
+}
+
+/* ── Clock ──────────────────────────────────────────────────────── */
 
 .desktop-rss-wall-date {
     /* Font/size/color set inline from GSettings */
     text-shadow: 0px 2px 6px rgba(0, 0, 0, 0.85);
 }
 
-.desktop-rss-wall-rss-panel {
-}
-
 .desktop-rss-wall-clock-panel {
+    /* Background applied inline from GSettings */
 }
 
 .desktop-rss-wall-background-box {

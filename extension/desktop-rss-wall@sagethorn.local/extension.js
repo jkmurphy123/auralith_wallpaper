@@ -1,16 +1,19 @@
 /**
  * Desktop RSS Wall — GNOME Shell Extension
  *
- * Milestone 3: Live-updating clock widget with full GSettings support.
- * Actor positions, sizes, fonts, colors, opacity, and background box
- * all read from GSettings with live updates.
+ * Milestone 5: RSS display panel reads feed.json, renders title + items,
+ * and watches for cache updates via GFileMonitor + periodic timer.
  */
-
+import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
-import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+
+// Paths
+const CACHE_DIR = GLib.build_filenamev([GLib.get_user_cache_dir(), 'desktop-rss-wall']);
+const FEED_CACHE_PATH = GLib.build_filenamev([CACHE_DIR, 'feed.json']);
 
 export default class DesktopRssWallExtension extends Extension {
     enable() {
@@ -20,6 +23,10 @@ export default class DesktopRssWallExtension extends Extension {
             'org.gnome.shell.extensions.desktop-rss-wall@sagethorn.local',
         );
         this._signalIds = [];
+        this._feedMonitor = null;
+        this._feedMonitorId = 0;
+        this._rssRefreshTimerId = 0;
+        this._rssItemLabels = [];
 
         // --- Load stylesheet ---
         const sheet = this.dir.get_child('stylesheet.css');
@@ -39,12 +46,39 @@ export default class DesktopRssWallExtension extends Extension {
         });
 
         // ==================================================================
-        //  RSS panel
+        //  RSS panel — structured layout with background box
         // ==================================================================
-        this._rssActor = new St.Label({
-            text: 'Desktop RSS Wall',
-            style_class: 'desktop-rss-wall-title',
+        this._rssActor = new Clutter.Actor({
+            name: 'desktop-rss-wall-rss-actor',
+            reactive: false,
         });
+
+        // Background bin
+        this._rssBin = new St.Bin({
+            name: 'desktop-rss-wall-rss-bin',
+            style_class: 'desktop-rss-wall-rss-panel',
+            x_expand: false,
+            y_expand: false,
+        });
+        this._rssActor.add_child(this._rssBin);
+
+        // Vertical box for title + items
+        this._rssBox = new St.BoxLayout({
+            name: 'desktop-rss-wall-rss-box',
+            style_class: 'desktop-rss-wall-rss-box',
+            vertical: true,
+            x_expand: false,
+            y_expand: false,
+        });
+
+        // Feed title label
+        this._rssTitleLabel = new St.Label({
+            text: '',
+            style_class: 'desktop-rss-wall-rss-title',
+        });
+        this._rssBox.add_child(this._rssTitleLabel);
+
+        this._rssBin.set_child(this._rssBox);
         this._rootActor.add_child(this._rssActor);
 
         // ==================================================================
@@ -76,7 +110,12 @@ export default class DesktopRssWallExtension extends Extension {
         this._applyClockSettings();
 
         // --- Connect change signals for live updates ---
-        const rssKeys = ['rss-x', 'rss-y', 'rss-width', 'rss-height', 'rss-opacity'];
+        const rssKeys = [
+            'rss-x', 'rss-y', 'rss-width', 'rss-height', 'rss-opacity',
+            'rss-enabled', 'rss-max-items',
+            'rss-font-family', 'rss-font-size', 'rss-font-color',
+            'rss-background-enabled', 'rss-background-color', 'rss-background-opacity',
+        ];
         for (const key of rssKeys) {
             const id = this._settings.connect(
                 `changed::${key}`,
@@ -100,6 +139,15 @@ export default class DesktopRssWallExtension extends Extension {
             this._signalIds.push(id);
         }
 
+        // --- Load initial RSS cache ---
+        this._loadRssCache();
+
+        // --- Watch feed.json for changes (helper writes to it) ---
+        this._startFeedMonitor();
+
+        // --- Periodic RSS reload (safety net if monitor misses an update) ---
+        this._startRssRefreshTimer();
+
         // --- Start live clock timer (update every second) ---
         this._clockTimerId = GLib.timeout_add_seconds(
             GLib.PRIORITY_DEFAULT,
@@ -118,6 +166,15 @@ export default class DesktopRssWallExtension extends Extension {
 
     disable() {
         console.log('[desktop-rss-wall] disabling');
+
+        // Stop file monitor
+        this._stopFeedMonitor();
+
+        // Stop RSS refresh timer
+        if (this._rssRefreshTimerId) {
+            GLib.source_remove(this._rssRefreshTimerId);
+            this._rssRefreshTimerId = 0;
+        }
 
         // Stop clock timer
         if (this._clockTimerId) {
@@ -140,6 +197,10 @@ export default class DesktopRssWallExtension extends Extension {
             this._rootActor.destroy();
             this._rootActor = null;
             this._rssActor = null;
+            this._rssBin = null;
+            this._rssBox = null;
+            this._rssTitleLabel = null;
+            this._rssItemLabels = [];
             this._clockActor = null;
             this._clockBin = null;
             this._clockLabel = null;
@@ -152,7 +213,172 @@ export default class DesktopRssWallExtension extends Extension {
             this._stylesheet = null;
         }
 
-        console.log('[desktop-rss-wall] disabled — actors, signals, timer, and stylesheet removed');
+        console.log('[desktop-rss-wall] disabled — actors, signals, timers, monitor, and stylesheet removed');
+    }
+
+    // ======================================================================
+    //  Feed file monitor
+    // ======================================================================
+
+    _startFeedMonitor() {
+        try {
+            const feedFile = Gio.File.new_for_path(FEED_CACHE_PATH);
+            this._feedMonitor = feedFile.monitor_file(
+                Gio.FileMonitorFlags.NONE,
+                null,  // cancellable
+            );
+            this._feedMonitorId = this._feedMonitor.connect(
+                'changed',
+                (_monitor, _file, _otherFile, eventType) => {
+                    // CHANGED = 0, CHANGES_DONE_HINT = 1, DELETED = 2, CREATED = 3
+                    if (eventType === Gio.FileMonitorEvent.CHANGES_DONE_HINT ||
+                        eventType === Gio.FileMonitorEvent.CREATED) {
+                        console.log('[desktop-rss-wall] feed.json changed — reloading');
+                        this._loadRssCache();
+                    }
+                },
+            );
+            console.log(`[desktop-rss-wall] monitoring ${FEED_CACHE_PATH}`);
+        } catch (e) {
+            console.log(`[desktop-rss-wall] feed monitor setup failed: ${e}`);
+        }
+    }
+
+    _stopFeedMonitor() {
+        if (this._feedMonitorId && this._feedMonitor) {
+            this._feedMonitor.disconnect(this._feedMonitorId);
+            this._feedMonitorId = 0;
+        }
+        if (this._feedMonitor) {
+            this._feedMonitor.cancel();
+            this._feedMonitor = null;
+        }
+    }
+
+    // ======================================================================
+    //  RSS periodic refresh timer
+    // ======================================================================
+
+    _startRssRefreshTimer() {
+        const minutes = this._settings
+            ? this._settings.get_int('rss-refresh-minutes')
+            : 15;
+        const seconds = Math.max(1, minutes * 60);
+
+        if (this._rssRefreshTimerId) {
+            GLib.source_remove(this._rssRefreshTimerId);
+        }
+
+        this._rssRefreshTimerId = GLib.timeout_add_seconds(
+            GLib.PRIORITY_DEFAULT,
+            seconds,
+            () => {
+                console.log('[desktop-rss-wall] periodic RSS reload');
+                this._loadRssCache();
+                return GLib.SOURCE_CONTINUE;
+            },
+        );
+    }
+
+    // ======================================================================
+    //  RSS cache loading + rendering
+    // ======================================================================
+
+    _loadRssCache() {
+        const [ok, contents] = GLib.file_get_contents(FEED_CACHE_PATH);
+
+        if (!ok) {
+            console.log('[desktop-rss-wall] feed.json not found — showing placeholder');
+            this._renderRssFallback('No feed cache yet.\nRun desktop-rss-wall-helper fetch-rss');
+            return;
+        }
+
+        let data;
+        try {
+            data = JSON.parse(imports.byteArray.toString(contents));
+        } catch (e) {
+            console.log(`[desktop-rss-wall] feed.json parse error: ${e}`);
+            this._renderRssFallback('Feed cache is corrupt.');
+            return;
+        }
+
+        // If the helper wrote an error, show it gracefully
+        if (data.error) {
+            console.log(`[desktop-rss-wall] feed cache error: ${data.error}`);
+            this._renderRssFallback(`Feed unavailable.\n${data.error}`);
+            return;
+        }
+
+        const maxItems = this._settings
+            ? this._settings.get_int('rss-max-items')
+            : 5;
+
+        const title = data.feed_title || 'Untitled Feed';
+        const items = (data.items || []).slice(0, maxItems);
+
+        this._renderRssItems(title, items);
+    }
+
+    /**
+     * Render the RSS panel with a feed title and list of items.
+     */
+    _renderRssItems(title, items) {
+        // Clear old item labels
+        for (const label of this._rssItemLabels) {
+            this._rssBox.remove_child(label);
+            label.destroy();
+        }
+        this._rssItemLabels = [];
+
+        // Feed title
+        this._rssTitleLabel.text = title;
+        this._rssTitleLabel.visible = true;
+
+        if (items.length === 0) {
+            const emptyLabel = new St.Label({
+                text: '(no items)',
+                style_class: 'desktop-rss-wall-rss-item',
+            });
+            this._rssBox.add_child(emptyLabel);
+            this._rssItemLabels.push(emptyLabel);
+        }
+
+        for (const item of items) {
+            const text = `\u2022 ${item.title}`;  // bullet
+            const label = new St.Label({
+                text,
+                style_class: 'desktop-rss-wall-rss-item',
+            });
+            this._rssBox.add_child(label);
+            this._rssItemLabels.push(label);
+        }
+
+        // Re-apply font styling to all labels
+        this._applyRssFontStyle();
+    }
+
+    /**
+     * Render fallback text when feed cache is missing or in error state.
+     */
+    _renderRssFallback(message) {
+        // Clear old item labels
+        for (const label of this._rssItemLabels) {
+            this._rssBox.remove_child(label);
+            label.destroy();
+        }
+        this._rssItemLabels = [];
+
+        this._rssTitleLabel.text = '';
+        this._rssTitleLabel.visible = false;
+
+        const label = new St.Label({
+            text: message,
+            style_class: 'desktop-rss-wall-rss-fallback',
+        });
+        this._rssBox.add_child(label);
+        this._rssItemLabels.push(label);
+
+        this._applyRssFontStyle();
     }
 
     // ======================================================================
@@ -162,27 +388,83 @@ export default class DesktopRssWallExtension extends Extension {
     _applyRssSettings() {
         if (!this._settings || !this._rssActor) return;
 
+        // Visibility
+        const enabled = this._settings.get_boolean('rss-enabled');
+        this._rssActor.visible = enabled;
+        if (!enabled) {
+            console.log('[desktop-rss-wall] rss hidden (rss-enabled=false)');
+            return;
+        }
+
+        // Position
         this._rssActor.x = this._settings.get_int('rss-x');
         this._rssActor.y = this._settings.get_int('rss-y');
-        this._rssActor.width = this._settings.get_int('rss-width');
-        this._rssActor.clutter_text.ellipsize = 3; // PANGO_ELLIPSIZE_END
+
+        // Width / height on the container box
+        const width = this._settings.get_int('rss-width');
+        const height = this._settings.get_int('rss-height');
+        this._rssBox.width = width;
+        this._rssBox.height = height;
+
+        // Opacity
         this._rssActor.opacity = Math.round(
             this._settings.get_double('rss-opacity') * 255,
         );
 
+        // Font & color (inline style on labels)
+        this._applyRssFontStyle();
+
+        // Background box
+        const bgEnabled = this._settings.get_boolean('rss-background-enabled');
+        const bgColor = this._settings.get_string('rss-background-color');
+        const bgOpacity = this._settings.get_double('rss-background-opacity');
+
+        if (bgEnabled) {
+            const {r, g, b} = this._hexToRgb(bgColor);
+            const bgCornerRadius = 8;
+            this._rssBin.style = [
+                `background-color: rgba(${r}, ${g}, ${b}, ${bgOpacity});`,
+                `border-radius: ${bgCornerRadius}px;`,
+                'padding: 12px 16px;',
+            ].join(' ');
+        } else {
+            this._rssBin.style = '';
+        }
+
         console.log(
             `[desktop-rss-wall] rss → x=${this._rssActor.x} y=${this._rssActor.y} ` +
-            `w=${this._rssActor.width} opacity=${this._rssActor.opacity}`,
+            `w=${width} h=${height} bg=${bgEnabled} enabled=${enabled}`,
         );
+    }
+
+    _applyRssFontStyle() {
+        if (!this._settings) return;
+
+        const fontFamily = this._settings.get_string('rss-font-family');
+        const fontSize = this._settings.get_int('rss-font-size');
+        const fontColor = this._settings.get_string('rss-font-color');
+
+        const style = [
+            `font-family: "${fontFamily}", sans-serif;`,
+            `font-size: ${fontSize}px;`,
+            `color: ${fontColor};`,
+        ].join(' ');
+
+        // Title label
+        if (this._rssTitleLabel) {
+            this._rssTitleLabel.style = style;
+        }
+
+        // Item/fallback labels
+        for (const label of this._rssItemLabels) {
+            label.style = style;
+        }
     }
 
     // ======================================================================
     //  Clock — live update timer
     // ======================================================================
 
-    /**
-     * Called every second by the GLib timeout to refresh the displayed time.
-     */
     _updateClockDisplay() {
         if (!this._clockLabel) return;
 
@@ -193,14 +475,11 @@ export default class DesktopRssWallExtension extends Extension {
         this._clockLabel.text = this._formatClockDate(new Date(), format);
     }
 
-    /**
-     * Format a JavaScript Date using GLib.DateTime and strftime-style format.
-     */
     _formatClockDate(date, format) {
         try {
             const dt = GLib.DateTime.new_local(
                 date.getFullYear(),
-                date.getMonth() + 1,   // GLib months are 1-based
+                date.getMonth() + 1,
                 date.getDate(),
                 date.getHours(),
                 date.getMinutes(),
@@ -209,7 +488,6 @@ export default class DesktopRssWallExtension extends Extension {
             return dt.format(format);
         } catch (e) {
             console.log(`[desktop-rss-wall] date format error: ${e}`);
-            // Fallback to simple ISO-ish string on format error
             return date.toLocaleString();
         }
     }
@@ -221,7 +499,6 @@ export default class DesktopRssWallExtension extends Extension {
     _applyClockSettings() {
         if (!this._settings || !this._clockActor) return;
 
-        // Visibility
         const enabled = this._settings.get_boolean('clock-enabled');
         this._clockActor.visible = enabled;
         if (!enabled) {
@@ -229,16 +506,13 @@ export default class DesktopRssWallExtension extends Extension {
             return;
         }
 
-        // Position
         this._clockActor.x = this._settings.get_int('clock-x');
         this._clockActor.y = this._settings.get_int('clock-y');
 
-        // Opacity
         this._clockActor.opacity = Math.round(
             this._settings.get_double('clock-opacity') * 255,
         );
 
-        // Font & color (inline style on label, overrides stylesheet defaults)
         const fontFamily = this._settings.get_string('clock-font-family');
         const fontSize = this._settings.get_int('clock-font-size');
         const fontColor = this._settings.get_string('clock-font-color');
@@ -249,13 +523,11 @@ export default class DesktopRssWallExtension extends Extension {
             `color: ${fontColor};`,
         ].join(' ');
 
-        // Background box
         const bgEnabled = this._settings.get_boolean('clock-background-enabled');
         const bgColor = this._settings.get_string('clock-background-color');
         const bgOpacity = this._settings.get_double('clock-background-opacity');
 
         if (bgEnabled) {
-            // Parse hex color and apply opacity
             const {r, g, b} = this._hexToRgb(bgColor);
             this._clockBin.style = [
                 `background-color: rgba(${r}, ${g}, ${b}, ${bgOpacity});`,
@@ -266,7 +538,6 @@ export default class DesktopRssWallExtension extends Extension {
             this._clockBin.style = '';
         }
 
-        // Refresh the display text now (format may have changed)
         this._updateClockDisplay();
 
         console.log(
@@ -275,13 +546,12 @@ export default class DesktopRssWallExtension extends Extension {
         );
     }
 
-    /**
-     * Parse a hex color string like '#ff8800' or '#abc' to {r, g, b}.
-     * Returns {r: 255, g: 255, b: 255} on parse failure.
-     */
+    // ======================================================================
+    //  Utility
+    // ======================================================================
+
     _hexToRgb(hex) {
         let h = hex.replace('#', '');
-        // Expand shorthand #abc → #aabbcc
         if (h.length === 3) {
             h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
         }
