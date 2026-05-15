@@ -1,0 +1,6 @@
+[Unit]
+Description=Refresh Desktop RSS Wall cache
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/desktop-rss-wall-helper refresh-all

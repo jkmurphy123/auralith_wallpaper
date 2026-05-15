@@ -1,0 +1,136 @@
+<schemalist>
+  <schema id="org.gnome.shell.extensions.desktop-rss-wall"
+          path="/org/gnome/shell/extensions/desktop-rss-wall/">
+
+    <!-- RSS Feed Settings -->
+    <key name="rss-enabled" type="b">
+      <default>true</default>
+      <summary>Enable RSS feed display</summary>
+    </key>
+    <key name="rss-feed-url" type="s">
+      <default>"https://example.com/feed.xml"</default>
+      <summary>RSS feed URL</summary>
+    </key>
+    <key name="rss-refresh-minutes" type="i">
+      <default>15</default>
+      <summary>RSS refresh interval in minutes</summary>
+    </key>
+    <key name="rss-max-items" type="i">
+      <default>5</default>
+      <summary>Maximum number of feed items to display</summary>
+    </key>
+    <key name="rss-x" type="i">
+      <default>80</default>
+      <summary>RSS panel horizontal position</summary>
+    </key>
+    <key name="rss-y" type="i">
+      <default>120</default>
+      <summary>RSS panel vertical position</summary>
+    </key>
+    <key name="rss-width" type="i">
+      <default>650</default>
+      <summary>RSS panel width</summary>
+    </key>
+    <key name="rss-height" type="i">
+      <default>420</default>
+      <summary>RSS panel height</summary>
+    </key>
+    <key name="rss-opacity" type="d">
+      <default>0.85</default>
+      <summary>RSS panel opacity</summary>
+    </key>
+    <key name="rss-font-family" type="s">
+      <default>"DejaVu Sans"</default>
+      <summary>RSS panel font family</summary>
+    </key>
+    <key name="rss-font-size" type="i">
+      <default>18</default>
+      <summary>RSS panel font size</summary>
+    </key>
+    <key name="rss-font-color" type="s">
+      <default>"#ffffff"</default>
+      <summary>RSS panel font color</summary>
+    </key>
+    <key name="rss-background-enabled" type="b">
+      <default>true</default>
+      <summary>Enable RSS background box</summary>
+    </key>
+    <key name="rss-background-color" type="s">
+      <default>"#000000"</default>
+      <summary>RSS background box color</summary>
+    </key>
+    <key name="rss-background-opacity" type="d">
+      <default>0.35</default>
+      <summary>RSS background box opacity</summary>
+    </key>
+
+    <!-- Clock Settings -->
+    <key name="clock-enabled" type="b">
+      <default>true</default>
+      <summary>Enable clock display</summary>
+    </key>
+    <key name="clock-format" type="s">
+      <default>"%A, %B %-d, %Y  %I:%M %p"</default>
+      <summary>Clock date/time format string</summary>
+    </key>
+    <key name="clock-x" type="i">
+      <default>80</default>
+      <summary>Clock horizontal position</summary>
+    </key>
+    <key name="clock-y" type="i">
+      <default>40</default>
+      <summary>Clock vertical position</summary>
+    </key>
+    <key name="clock-opacity" type="d">
+      <default>0.95</default>
+      <summary>Clock opacity</summary>
+    </key>
+    <key name="clock-font-family" type="s">
+      <default>"DejaVu Sans Mono"</default>
+      <summary>Clock font family</summary>
+    </key>
+    <key name="clock-font-size" type="i">
+      <default>32</default>
+      <summary>Clock font size</summary>
+    </key>
+    <key name="clock-font-color" type="s">
+      <default>"#ffffff"</default>
+      <summary>Clock font color</summary>
+    </key>
+
+    <!-- Slideshow Settings -->
+    <key name="slideshow-enabled" type="b">
+      <default>true</default>
+      <summary>Enable slideshow</summary>
+    </key>
+    <key name="slideshow-folder" type="s">
+      <default>""</default>
+      <summary>Slideshow image folder path</summary>
+    </key>
+    <key name="slideshow-include-subfolders" type="b">
+      <default>false</default>
+      <summary>Include subfolders in slideshow</summary>
+    </key>
+    <key name="slideshow-shuffle" type="b">
+      <default>true</default>
+      <summary>Shuffle slideshow images</summary>
+    </key>
+    <key name="slideshow-interval-seconds" type="i">
+      <default>60</default>
+      <summary>Slideshow interval in seconds</summary>
+    </key>
+    <key name="slideshow-opacity" type="d">
+      <default>1.0</default>
+      <summary>Slideshow opacity</summary>
+    </key>
+    <key name="slideshow-fit-mode" type="s">
+      <default>"cover"</default>
+      <summary>Slideshow fit mode: cover, contain, stretch, center</summary>
+    </key>
+    <key name="dim-overlay-opacity" type="d">
+      <default>0.15</default>
+      <summary>Dim overlay opacity (for text readability)</summary>
+    </key>
+
+  </schema>
+</schemalist>

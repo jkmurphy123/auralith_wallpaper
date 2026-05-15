@@ -1,0 +1,8 @@
+{
+  "uuid": "desktop-rss-wall@sagethorn.local",
+  "name": "Desktop RSS Wall",
+  "description": "Displays an RSS feed, slideshow, and clock on the GNOME desktop.",
+  "shell-version": ["46"],
+  "url": "http://127.0.0.1:8000",
+  "version": 1
+}
