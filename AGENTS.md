@@ -51,5 +51,5 @@ Extend to 47-50 as testing confirms compatibility.
 
 See `desktop-rss-wall-design.md` for the full milestone plan (0-10).
 
-Current: Milestone 1 (Desktop Text Proof of Concept) — complete.
-Next: Milestone 2 (GSettings + Preferences Basics).
+Current: Milestone 2 (GSettings + Preferences Basics) — complete.
+Next: Milestone 3 (Clock Widget).

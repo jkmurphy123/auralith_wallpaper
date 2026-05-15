@@ -5,19 +5,25 @@ as a desktop wallpaper layer on Ubuntu GNOME Wayland.
 
 ## Status
 
-Milestone 1 — Desktop text proof of concept. The extension creates
-a visible desktop actor with styled text.
+Milestone 2 — GSettings + Preferences basics. Position, size, opacity,
+and font-size are configurable via the GNOME Extensions preferences window
+and update live on the desktop.
 
 ## What's Visible
 
 After enabling the extension, you'll see on the desktop:
 
 ```
-Desktop RSS Wall
-Friday, May 15, 2026
+Desktop RSS Wall        (RSS panel — configurable position/size/opacity)
+Friday, May 15, 2026    (Clock — configurable position/font-size)
 ```
 
-Styled with white text, drop shadows, and positioned at (80, 40).
+Open Extensions → Desktop RSS Wall → Preferences to adjust:
+
+- **RSS Panel**: X, Y, Width, Height, Opacity
+- **Clock**: X, Y, Font Size
+
+All changes apply live — no restart needed.
 
 ## Prerequisites
 

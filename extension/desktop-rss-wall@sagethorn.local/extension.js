@@ -1,8 +1,8 @@
 /**
  * Desktop RSS Wall — GNOME Shell Extension
  *
- * Milestone 1: Desktop text proof of concept.
- * Displays "Desktop RSS Wall" and the current date on the desktop.
+ * Milestone 2: GSettings-driven desktop text.
+ * Actor positions, sizes, and opacity read from GSettings with live updates.
  */
 
 import St from 'gi://St';
@@ -13,6 +13,9 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 export default class DesktopRssWallExtension extends Extension {
     enable() {
         console.log('[desktop-rss-wall] enabling');
+
+        this._settings = this.getSettings();
+        this._signalIds = [];
 
         // --- Load stylesheet ---
         const sheet = this.dir.get_child('stylesheet.css');
@@ -31,24 +34,36 @@ export default class DesktopRssWallExtension extends Extension {
             y: 0,
         });
 
-        // --- Title label ---
-        this._titleLabel = new St.Label({
+        // --- RSS panel placeholder (title label) ---
+        this._rssActor = new St.Label({
             text: 'Desktop RSS Wall',
             style_class: 'desktop-rss-wall-title',
-            x: 80,
-            y: 40,
         });
+        this._rootActor.add_child(this._rssActor);
 
-        // --- Date label ---
-        this._dateLabel = new St.Label({
+        // --- Clock placeholder (date label) ---
+        this._clockActor = new St.Label({
             text: this._formatDate(new Date()),
             style_class: 'desktop-rss-wall-date',
-            x: 80,
-            y: 90,
         });
+        this._rootActor.add_child(this._clockActor);
 
-        this._rootActor.add_child(this._titleLabel);
-        this._rootActor.add_child(this._dateLabel);
+        // --- Apply GSettings ---
+        this._applyRssSettings();
+        this._applyClockSettings();
+
+        // --- Connect change signals for live updates ---
+        const rssKeys = ['rss-x', 'rss-y', 'rss-width', 'rss-height', 'rss-opacity'];
+        for (const key of rssKeys) {
+            const id = this._settings.connect(`changed::${key}`, () => this._applyRssSettings());
+            this._signalIds.push(id);
+        }
+
+        const clockKeys = ['clock-x', 'clock-y', 'clock-font-size'];
+        for (const key of clockKeys) {
+            const id = this._settings.connect(`changed::${key}`, () => this._applyClockSettings());
+            this._signalIds.push(id);
+        }
 
         // --- Add to desktop UI layer ---
         Main.layoutManager.uiGroup.add_child(this._rootActor);
@@ -59,13 +74,22 @@ export default class DesktopRssWallExtension extends Extension {
     disable() {
         console.log('[desktop-rss-wall] disabling');
 
+        // Disconnect GSettings signals
+        if (this._settings && this._signalIds.length > 0) {
+            for (const id of this._signalIds) {
+                this._settings.disconnect(id);
+            }
+            this._signalIds = [];
+        }
+        this._settings = null;
+
         // Remove actors
         if (this._rootActor) {
             Main.layoutManager.uiGroup.remove_child(this._rootActor);
             this._rootActor.destroy();
             this._rootActor = null;
-            this._titleLabel = null;
-            this._dateLabel = null;
+            this._rssActor = null;
+            this._clockActor = null;
         }
 
         // Unload stylesheet
@@ -75,8 +99,48 @@ export default class DesktopRssWallExtension extends Extension {
             this._stylesheet = null;
         }
 
-        console.log('[desktop-rss-wall] disabled — actors and stylesheet removed');
+        console.log('[desktop-rss-wall] disabled — actors, signals, and stylesheet removed');
     }
+
+    // ------------------------------------------------------------------
+    //  GSettings appliers
+    // ------------------------------------------------------------------
+
+    _applyRssSettings() {
+        if (!this._settings || !this._rssActor) return;
+
+        this._rssActor.x = this._settings.get_int('rss-x');
+        this._rssActor.y = this._settings.get_int('rss-y');
+        this._rssActor.width = this._settings.get_int('rss-width');
+        this._rssActor.clutter_text.ellipsize = 3; // PANGO_ELLIPSIZE_END
+        this._rssActor.opacity = Math.round(
+            this._settings.get_double('rss-opacity') * 255,
+        );
+
+        console.log(
+            `[desktop-rss-wall] rss → x=${this._rssActor.x} y=${this._rssActor.y} ` +
+            `w=${this._rssActor.width} opacity=${this._rssActor.opacity}`,
+        );
+    }
+
+    _applyClockSettings() {
+        if (!this._settings || !this._clockActor) return;
+
+        this._clockActor.x = this._settings.get_int('clock-x');
+        this._clockActor.y = this._settings.get_int('clock-y');
+
+        const fontSize = this._settings.get_int('clock-font-size');
+        this._clockActor.style = `font-size: ${fontSize}px;`;
+
+        console.log(
+            `[desktop-rss-wall] clock → x=${this._clockActor.x} y=${this._clockActor.y} ` +
+            `font-size=${fontSize}`,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    //  Date formatting
+    // ------------------------------------------------------------------
 
     _formatDate(date) {
         const days = [
