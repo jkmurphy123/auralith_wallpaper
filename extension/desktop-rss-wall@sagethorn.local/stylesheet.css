@@ -1,10 +1,25 @@
 /**
  * Desktop RSS Wall — Stylesheet
  *
- * Milestone 0: Empty stylesheet.  Classes added in later milestones.
+ * Milestone 1: Styles for the desktop text proof of concept.
  */
 
 .desktop-rss-wall-root {
+}
+
+.desktop-rss-wall-title {
+    font-family: "DejaVu Sans", sans-serif;
+    font-size: 24px;
+    font-weight: bold;
+    color: #ffffff;
+    text-shadow: 0px 2px 6px rgba(0, 0, 0, 0.85);
+}
+
+.desktop-rss-wall-date {
+    font-family: "DejaVu Sans Mono", monospace;
+    font-size: 18px;
+    color: #e0e0e0;
+    text-shadow: 0px 2px 6px rgba(0, 0, 0, 0.85);
 }
 
 .desktop-rss-wall-rss-panel {

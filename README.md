@@ -5,8 +5,19 @@ as a desktop wallpaper layer on Ubuntu GNOME Wayland.
 
 ## Status
 
-Milestone 0 — Project scaffold. Skeleton extension and helper tools are in place.
-No visible desktop content yet.
+Milestone 1 — Desktop text proof of concept. The extension creates
+a visible desktop actor with styled text.
+
+## What's Visible
+
+After enabling the extension, you'll see on the desktop:
+
+```
+Desktop RSS Wall
+Friday, May 15, 2026
+```
+
+Styled with white text, drop shadows, and positioned at (80, 40).
 
 ## Prerequisites
 
