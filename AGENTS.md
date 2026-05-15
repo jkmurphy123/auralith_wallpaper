@@ -51,5 +51,5 @@ Extend to 47-50 as testing confirms compatibility.
 
 See `desktop-rss-wall-design.md` for the full milestone plan (0-10).
 
-Current: Milestone 5 (RSS Display) — complete.
-Next: Milestone 6 (Image Index Helper).
+Current: Milestone 6 (Image Index Helper) — complete.
+Next: Milestone 7 (Slideshow Display).

@@ -20,6 +20,7 @@ from pathlib import Path
 import typer
 
 from .cache import write_json_cache, read_json_cache
+from .image_indexer import index_images as index_image_folder
 from .rss_fetcher import fetch_feed
 
 app = typer.Typer(
@@ -83,7 +84,45 @@ def index_images(
     recursive: bool = typer.Option(False, "--recursive", help="Include subfolders"),
 ) -> None:
     """Index image files in a folder and write a JSON cache file."""
-    typer.echo(f"[stub] Would index {folder} → {output} (recursive={recursive})")
+    cache = index_image_folder(folder, recursive=recursive)
+
+    if cache.error and cache.images:
+        # Partial success — found images but also some issue.
+        write_json_cache(output, _image_cache_to_dict(cache))
+        typer.echo(
+            f"Indexed {len(cache.images)} image(s) from {folder} (with warnings)\n"
+            f"→ {output}",
+        )
+        return
+
+    if cache.error:
+        # Total failure — no images found or folder doesn't exist.
+        # Preserve any existing cache.
+        existing = read_json_cache(output)
+        if existing is not None:
+            typer.echo(
+                f"Image index FAILED for {folder}: {cache.error}\n"
+                f"Preserving last successful cache at {output}",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        # No existing cache — write the error cache so the extension
+        # sees a structured empty result.
+        typer.echo(
+            f"Image index FAILED for {folder}: {cache.error}\n"
+            f"No previous cache exists — writing empty state to {output}",
+            err=True,
+        )
+        write_json_cache(output, _image_cache_to_dict(cache))
+        raise typer.Exit(code=1)
+
+    # Success — write the image cache
+    write_json_cache(output, _image_cache_to_dict(cache))
+    typer.echo(
+        f"Indexed {len(cache.images)} image(s) from {folder}\n"
+        f"→ {output}",
+    )
 
 
 @app.command()
@@ -117,6 +156,25 @@ def _cache_to_dict(cache) -> dict:
                 "summary": i.summary,
             }
             for i in cache.items
+        ],
+        "error": cache.error,
+    }
+
+
+def _image_cache_to_dict(cache) -> dict:
+    """Convert an ImageCache to a JSON-serialisable dict."""
+    return {
+        "version": cache.version,
+        "indexed_at": cache.indexed_at,
+        "folder": cache.folder,
+        "recursive": cache.recursive,
+        "images": [
+            {
+                "path": i.path,
+                "mtime": i.mtime,
+                "size_bytes": i.size_bytes,
+            }
+            for i in cache.images
         ],
         "error": cache.error,
     }
