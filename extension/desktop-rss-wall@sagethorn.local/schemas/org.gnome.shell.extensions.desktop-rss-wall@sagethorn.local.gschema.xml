@@ -1,6 +1,6 @@
 <schemalist>
-  <schema id="org.gnome.shell.extensions.desktop-rss-wall"
-          path="/org/gnome/shell/extensions/desktop-rss-wall/">
+  <schema id="org.gnome.shell.extensions.desktop-rss-wall@sagethorn.local"
+          path="/org/gnome/shell/extensions/desktop-rss-wall@sagethorn.local/">
 
     <!-- RSS Feed Settings -->
     <key name="rss-enabled" type="b">
@@ -96,6 +96,18 @@
     <key name="clock-font-color" type="s">
       <default>"#ffffff"</default>
       <summary>Clock font color</summary>
+    </key>
+    <key name="clock-background-enabled" type="b">
+      <default>true</default>
+      <summary>Enable clock background box</summary>
+    </key>
+    <key name="clock-background-color" type="s">
+      <default>"#000000"</default>
+      <summary>Clock background box color</summary>
+    </key>
+    <key name="clock-background-opacity" type="d">
+      <default>0.35</default>
+      <summary>Clock background box opacity</summary>
     </key>
 
     <!-- Slideshow Settings -->
