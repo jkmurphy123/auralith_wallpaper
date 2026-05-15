@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
-# Remove the systemd user timer.
+# remove-helper-timer.sh — Remove the systemd user timer for Desktop RSS Wall.
+#
+# Disables the timer, removes the unit files, and reloads the daemon.
+
 set -euo pipefail
 
-echo "=== Remove Desktop RSS Wall systemd timer ==="
+UNIT_DIR="$HOME/.config/systemd/user"
 
-systemctl --user stop desktop-rss-wall-fetch.timer 2>/dev/null || true
-systemctl --user disable desktop-rss-wall-fetch.timer 2>/dev/null || true
+echo "Removing Desktop RSS Wall user timer ..."
 
-rm -f "${HOME}/.config/systemd/user/desktop-rss-wall-fetch.service"
-rm -f "${HOME}/.config/systemd/user/desktop-rss-wall-fetch.timer"
+systemctl --user disable --now desktop-rss-wall-fetch.timer 2>/dev/null || true
+
+rm -f "$UNIT_DIR/desktop-rss-wall-fetch.service"
+rm -f "$UNIT_DIR/desktop-rss-wall-fetch.timer"
+
+echo "  → Removed service + timer from $UNIT_DIR"
 
 systemctl --user daemon-reload
 
-echo "Timer removed."
+echo "  → Daemon reloaded"
+echo ""
+echo "Desktop RSS Wall user timer removed."

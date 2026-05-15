@@ -51,5 +51,5 @@ Extend to 47-50 as testing confirms compatibility.
 
 See `desktop-rss-wall-design.md` for the full milestone plan (0-10).
 
-Current: Milestone 8 (Full Preferences UI) — complete.
-Next: Milestone 9 (User Timer Integration).
+Current: Milestone 9 (User Timer Integration) — complete.
+Next: Milestone 10 (Packaging and Polish).

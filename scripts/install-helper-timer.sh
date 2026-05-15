@@ -1,21 +1,31 @@
 #!/usr/bin/env bash
-# Install the systemd user timer for periodic cache refresh.
+# install-helper-timer.sh — Install the systemd user timer for Desktop RSS Wall.
+#
+# Copies the service and timer files to ~/.config/systemd/user/
+# and enables the timer.
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-SYSTEMD_SRC="${PROJECT_DIR}/systemd"
-SYSTEMD_DEST="${HOME}/.config/systemd/user"
+UNIT_DIR="$HOME/.config/systemd/user"
 
-echo "=== Install Desktop RSS Wall systemd timer ==="
+echo "Installing Desktop RSS Wall user timer ..."
 
-mkdir -p "${SYSTEMD_DEST}"
-cp "${SYSTEMD_SRC}/desktop-rss-wall-fetch.service" "${SYSTEMD_DEST}/"
-cp "${SYSTEMD_SRC}/desktop-rss-wall-fetch.timer" "${SYSTEMD_DEST}/"
+mkdir -p "$UNIT_DIR"
+
+cp "$PROJECT_DIR/systemd/desktop-rss-wall-fetch.service" "$UNIT_DIR/"
+cp "$PROJECT_DIR/systemd/desktop-rss-wall-fetch.timer"   "$UNIT_DIR/"
+
+echo "  → Copied service + timer to $UNIT_DIR"
 
 systemctl --user daemon-reload
 systemctl --user enable --now desktop-rss-wall-fetch.timer
 
+echo "  → Timer enabled and started"
 echo ""
-echo "Timer installed and started."
-echo "Check status: systemctl --user status desktop-rss-wall-fetch.timer"
+echo "Check status with:"
+echo "  systemctl --user status desktop-rss-wall-fetch.timer"
+echo ""
+echo "To see recent refresh output:"
+echo "  journalctl --user -u desktop-rss-wall-fetch.service"
