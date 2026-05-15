@@ -1,19 +1,22 @@
 /**
  * Desktop RSS Wall — GNOME Shell Extension
  *
- * Milestone 5: RSS display panel reads feed.json, renders title + items,
- * and watches for cache updates via GFileMonitor + periodic timer.
+ * Milestone 7: Slideshow display — image layer reads images.json,
+ * rotates on a timer, supports fit modes (cover/contain/stretch/center),
+ * shuffle, opacity, and a dim overlay for text readability.
  */
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
+import GdkPixbuf from 'gi://GdkPixbuf';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 // Paths
 const CACHE_DIR = GLib.build_filenamev([GLib.get_user_cache_dir(), 'desktop-rss-wall']);
 const FEED_CACHE_PATH = GLib.build_filenamev([CACHE_DIR, 'feed.json']);
+const IMAGE_CACHE_PATH = GLib.build_filenamev([CACHE_DIR, 'images.json']);
 
 export default class DesktopRssWallExtension extends Extension {
     enable() {
@@ -25,8 +28,13 @@ export default class DesktopRssWallExtension extends Extension {
         this._signalIds = [];
         this._feedMonitor = null;
         this._feedMonitorId = 0;
+        this._imageMonitor = null;
+        this._imageMonitorId = 0;
         this._rssRefreshTimerId = 0;
         this._rssItemLabels = [];
+        this._slideTimerId = 0;
+        this._slideIndex = 0;
+        this._shuffledImages = [];
 
         // --- Load stylesheet ---
         const sheet = this.dir.get_child('stylesheet.css');
@@ -37,6 +45,11 @@ export default class DesktopRssWallExtension extends Extension {
             console.log('[desktop-rss-wall] stylesheet loaded');
         }
 
+        // --- Screen dimensions ---
+        const monitor = Main.layoutManager.primaryMonitor;
+        this._screenWidth = monitor.width;
+        this._screenHeight = monitor.height;
+
         // --- Create root container ---
         this._rootActor = new Clutter.Actor({
             name: 'desktop-rss-wall-root',
@@ -46,6 +59,48 @@ export default class DesktopRssWallExtension extends Extension {
         });
 
         // ==================================================================
+        //  Slideshow layer (bottom — behind everything else)
+        // ==================================================================
+        this._slideshowBin = new St.Bin({
+            name: 'desktop-rss-wall-slideshow-bin',
+            style_class: 'desktop-rss-wall-slideshow',
+            x: 0,
+            y: 0,
+            width: this._screenWidth,
+            height: this._screenHeight,
+            clip_to_allocation: true,
+            x_expand: false,
+            y_expand: false,
+        });
+
+        this._slideshowContent = new Clutter.Actor({
+            name: 'desktop-rss-wall-slideshow-content',
+            reactive: false,
+        });
+        this._slideshowBin.set_child(this._slideshowContent);
+
+        this._rootActor.add_child(this._slideshowBin);
+
+        // ==================================================================
+        //  Dim overlay (between slideshow and text layers)
+        // ==================================================================
+        this._dimOverlay = new Clutter.Actor({
+            name: 'desktop-rss-wall-dim-overlay',
+            reactive: false,
+            x: 0,
+            y: 0,
+            width: this._screenWidth,
+            height: this._screenHeight,
+            background_color: new Clutter.Color({
+                red: 0,
+                green: 0,
+                blue: 0,
+                alpha: 255,
+            }),
+        });
+        this._rootActor.add_child(this._dimOverlay);
+
+        // ==================================================================
         //  RSS panel — structured layout with background box
         // ==================================================================
         this._rssActor = new Clutter.Actor({
@@ -53,7 +108,6 @@ export default class DesktopRssWallExtension extends Extension {
             reactive: false,
         });
 
-        // Background bin
         this._rssBin = new St.Bin({
             name: 'desktop-rss-wall-rss-bin',
             style_class: 'desktop-rss-wall-rss-panel',
@@ -62,7 +116,6 @@ export default class DesktopRssWallExtension extends Extension {
         });
         this._rssActor.add_child(this._rssBin);
 
-        // Vertical box for title + items
         this._rssBox = new St.BoxLayout({
             name: 'desktop-rss-wall-rss-box',
             style_class: 'desktop-rss-wall-rss-box',
@@ -71,7 +124,6 @@ export default class DesktopRssWallExtension extends Extension {
             y_expand: false,
         });
 
-        // Feed title label
         this._rssTitleLabel = new St.Label({
             text: '',
             style_class: 'desktop-rss-wall-rss-title',
@@ -106,10 +158,13 @@ export default class DesktopRssWallExtension extends Extension {
         this._rootActor.add_child(this._clockActor);
 
         // --- Apply GSettings ---
+        this._applySlideshowSettings();
         this._applyRssSettings();
         this._applyClockSettings();
 
         // --- Connect change signals for live updates ---
+
+        // RSS keys
         const rssKeys = [
             'rss-x', 'rss-y', 'rss-width', 'rss-height', 'rss-opacity',
             'rss-enabled', 'rss-max-items',
@@ -124,6 +179,7 @@ export default class DesktopRssWallExtension extends Extension {
             this._signalIds.push(id);
         }
 
+        // Clock keys
         const clockKeys = [
             'clock-x', 'clock-y',
             'clock-font-size', 'clock-font-family', 'clock-font-color',
@@ -139,16 +195,35 @@ export default class DesktopRssWallExtension extends Extension {
             this._signalIds.push(id);
         }
 
-        // --- Load initial RSS cache ---
+        // Slideshow keys
+        const slideKeys = [
+            'slideshow-enabled', 'slideshow-opacity', 'slideshow-fit-mode',
+            'dim-overlay-opacity', 'slideshow-interval-seconds',
+            'slideshow-shuffle',
+        ];
+        for (const key of slideKeys) {
+            const id = this._settings.connect(
+                `changed::${key}`,
+                () => this._applySlideshowSettings(),
+            );
+            this._signalIds.push(id);
+        }
+
+        // --- Load caches ---
+        this._loadImageCache();
         this._loadRssCache();
 
-        // --- Watch feed.json for changes (helper writes to it) ---
+        // --- File monitors (helper writes to these) ---
         this._startFeedMonitor();
+        this._startImageMonitor();
 
-        // --- Periodic RSS reload (safety net if monitor misses an update) ---
+        // --- Periodic RSS reload (safety net) ---
         this._startRssRefreshTimer();
 
-        // --- Start live clock timer (update every second) ---
+        // --- Slideshow rotation timer ---
+        this._startSlideTimer();
+
+        // --- Live clock timer ---
         this._clockTimerId = GLib.timeout_add_seconds(
             GLib.PRIORITY_DEFAULT,
             1,
@@ -167,16 +242,19 @@ export default class DesktopRssWallExtension extends Extension {
     disable() {
         console.log('[desktop-rss-wall] disabling');
 
-        // Stop file monitor
+        // Stop file monitors
         this._stopFeedMonitor();
+        this._stopImageMonitor();
 
-        // Stop RSS refresh timer
+        // Stop timers
         if (this._rssRefreshTimerId) {
             GLib.source_remove(this._rssRefreshTimerId);
             this._rssRefreshTimerId = 0;
         }
-
-        // Stop clock timer
+        if (this._slideTimerId) {
+            GLib.source_remove(this._slideTimerId);
+            this._slideTimerId = 0;
+        }
         if (this._clockTimerId) {
             GLib.source_remove(this._clockTimerId);
             this._clockTimerId = null;
@@ -196,6 +274,9 @@ export default class DesktopRssWallExtension extends Extension {
             Main.layoutManager.uiGroup.remove_child(this._rootActor);
             this._rootActor.destroy();
             this._rootActor = null;
+            this._slideshowBin = null;
+            this._slideshowContent = null;
+            this._dimOverlay = null;
             this._rssActor = null;
             this._rssBin = null;
             this._rssBox = null;
@@ -213,7 +294,305 @@ export default class DesktopRssWallExtension extends Extension {
             this._stylesheet = null;
         }
 
-        console.log('[desktop-rss-wall] disabled — actors, signals, timers, monitor, and stylesheet removed');
+        console.log('[desktop-rss-wall] disabled — all state cleaned up');
+    }
+
+    // ======================================================================
+    //  Image cache loading
+    // ======================================================================
+
+    _loadImageCache() {
+        if (!this._slideshowContent) return;
+
+        const [ok, contents] = GLib.file_get_contents(IMAGE_CACHE_PATH);
+
+        if (!ok) {
+            console.log('[desktop-rss-wall] images.json not found — no slideshow');
+            this._shuffledImages = [];
+            this._slideIndex = 0;
+            this._clearSlide();
+            return;
+        }
+
+        let data;
+        try {
+            data = JSON.parse(imports.byteArray.toString(contents));
+        } catch (e) {
+            console.log(`[desktop-rss-wall] images.json parse error: ${e}`);
+            this._shuffledImages = [];
+            this._slideIndex = 0;
+            this._clearSlide();
+            return;
+        }
+
+        if (data.error && !(data.images && data.images.length > 0)) {
+            console.log(`[desktop-rss-wall] image cache error: ${data.error}`);
+            this._shuffledImages = [];
+            this._slideIndex = 0;
+            this._clearSlide();
+            return;
+        }
+
+        const images = data.images || [];
+
+        if (images.length === 0) {
+            console.log('[desktop-rss-wall] image cache has no images');
+            this._shuffledImages = [];
+            this._slideIndex = 0;
+            this._clearSlide();
+            return;
+        }
+
+        // Shuffle if enabled
+        const shuffle = this._settings
+            ? this._settings.get_boolean('slideshow-shuffle')
+            : true;
+
+        this._shuffledImages = shuffle
+            ? this._fisherYatesShuffle([...images])
+            : [...images];
+
+        this._slideIndex = 0;
+        console.log(`[desktop-rss-wall] loaded ${images.length} image(s), shuffle=${shuffle}`);
+        this._advanceSlide();
+    }
+
+    // ======================================================================
+    //  Image file monitor
+    // ======================================================================
+
+    _startImageMonitor() {
+        try {
+            const imageFile = Gio.File.new_for_path(IMAGE_CACHE_PATH);
+            this._imageMonitor = imageFile.monitor_file(
+                Gio.FileMonitorFlags.NONE,
+                null,
+            );
+            this._imageMonitorId = this._imageMonitor.connect(
+                'changed',
+                (_monitor, _file, _otherFile, eventType) => {
+                    if (
+                        eventType === Gio.FileMonitorEvent.CHANGES_DONE_HINT ||
+                        eventType === Gio.FileMonitorEvent.CREATED
+                    ) {
+                        console.log('[desktop-rss-wall] images.json changed — reloading');
+                        this._loadImageCache();
+                    }
+                },
+            );
+            console.log(`[desktop-rss-wall] monitoring ${IMAGE_CACHE_PATH}`);
+        } catch (e) {
+            console.log(`[desktop-rss-wall] image monitor setup failed: ${e}`);
+        }
+    }
+
+    _stopImageMonitor() {
+        if (this._imageMonitorId && this._imageMonitor) {
+            this._imageMonitor.disconnect(this._imageMonitorId);
+            this._imageMonitorId = 0;
+        }
+        if (this._imageMonitor) {
+            this._imageMonitor.cancel();
+            this._imageMonitor = null;
+        }
+    }
+
+    // ======================================================================
+    //  Slideshow rotation
+    // ======================================================================
+
+    _startSlideTimer() {
+        if (this._slideTimerId) {
+            GLib.source_remove(this._slideTimerId);
+            this._slideTimerId = 0;
+        }
+
+        const seconds = this._settings
+            ? this._settings.get_int('slideshow-interval-seconds')
+            : 60;
+
+        if (seconds <= 0) return;
+
+        this._slideTimerId = GLib.timeout_add_seconds(
+            GLib.PRIORITY_DEFAULT,
+            seconds,
+            () => {
+                this._advanceSlide();
+                return GLib.SOURCE_CONTINUE;
+            },
+        );
+    }
+
+    _advanceSlide() {
+        if (!this._shuffledImages || this._shuffledImages.length === 0) return;
+
+        const entry = this._shuffledImages[this._slideIndex];
+        this._slideIndex = (this._slideIndex + 1) % this._shuffledImages.length;
+
+        const success = this._setSlideImage(entry.path);
+
+        if (!success) {
+            console.log(`[desktop-rss-wall] skipping missing image: ${entry.path}`);
+            // Try the next one immediately
+            this._advanceSlide();
+        }
+    }
+
+    /**
+     * Load and display a single image on the slideshow layer.
+     * Returns false if the file could not be loaded (missing, corrupt, etc.).
+     */
+    _setSlideImage(imagePath) {
+        if (!this._slideshowContent) return false;
+
+        try {
+            const file = Gio.File.new_for_path(imagePath);
+            if (!file.query_exists(null)) {
+                return false;
+            }
+
+            const pixbuf = GdkPixbuf.Pixbuf.new_from_file(imagePath);
+            const imgW = pixbuf.get_width();
+            const imgH = pixbuf.get_height();
+
+            const fitMode = this._settings
+                ? this._settings.get_string('slideshow-fit-mode')
+                : 'cover';
+
+            const [targetW, targetH] = this._computeFitSize(
+                imgW, imgH,
+                this._screenWidth, this._screenHeight,
+                fitMode,
+            );
+
+            // Scale pixbuf to target size
+            const scaled = pixbuf.scale_simple(
+                targetW, targetH,
+                GdkPixbuf.InterpType.BILINEAR,
+            );
+
+            // Create Clutter.Image from pixel data
+            const hasAlpha = scaled.get_has_alpha();
+            const image = new Clutter.Image();
+            image.set_data(
+                scaled.get_pixels(),
+                hasAlpha
+                    ? Clutter.ImageDataFormat.RGBA_8888
+                    : Clutter.ImageDataFormat.RGB_888,
+                scaled.get_width(),
+                scaled.get_height(),
+                scaled.get_rowstride(),
+            );
+
+            this._slideshowContent.content = image;
+            this._slideshowContent.set_size(targetW, targetH);
+
+            // Position: center for cover/contain/center; top-left for stretch
+            this._slideshowContent.x = Math.round((this._screenWidth - targetW) / 2);
+            this._slideshowContent.y = Math.round((this._screenHeight - targetH) / 2);
+
+            return true;
+        } catch (e) {
+            console.log(`[desktop-rss-wall] setSlideImage error for ${imagePath}: ${e.message}`);
+            return false;
+        }
+    }
+
+    /**
+     * Compute the target size for an image given the fit mode.
+     */
+    _computeFitSize(imgW, imgH, screenW, screenH, fitMode) {
+        switch (fitMode) {
+            case 'cover': {
+                const scale = Math.max(screenW / imgW, screenH / imgH);
+                return [
+                    Math.round(imgW * scale),
+                    Math.round(imgH * scale),
+                ];
+            }
+            case 'contain': {
+                const scale = Math.min(screenW / imgW, screenH / imgH);
+                return [
+                    Math.round(imgW * scale),
+                    Math.round(imgH * scale),
+                ];
+            }
+            case 'stretch':
+                return [screenW, screenH];
+            case 'center':
+            default:
+                return [imgW, imgH];
+        }
+    }
+
+    _clearSlide() {
+        if (!this._slideshowContent) return;
+        this._slideshowContent.content = null;
+        this._slideshowContent.set_size(0, 0);
+    }
+
+    /**
+     * Fisher-Yates shuffle — returns the array in-place.
+     */
+    _fisherYatesShuffle(arr) {
+        for (let i = arr.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+        return arr;
+    }
+
+    // ======================================================================
+    //  Slideshow GSettings
+    // ======================================================================
+
+    _applySlideshowSettings() {
+        if (!this._settings) return;
+
+        const enabled = this._settings.get_boolean('slideshow-enabled');
+
+        // Slideshow visibility
+        if (this._slideshowBin) {
+            this._slideshowBin.visible = enabled;
+        }
+
+        // Dim overlay: only show when slideshow is enabled
+        if (this._dimOverlay) {
+            this._dimOverlay.visible = enabled;
+            const dimOpacity = this._settings.get_double('dim-overlay-opacity');
+            this._dimOverlay.opacity = Math.round(dimOpacity * 255);
+        }
+
+        // Opacity
+        if (this._slideshowBin && enabled) {
+            const opacity = this._settings.get_double('slideshow-opacity');
+            this._slideshowBin.opacity = Math.round(opacity * 255);
+        }
+
+        // Re-apply current slide with new fit mode
+        if (enabled && this._shuffledImages.length > 0) {
+            // Re-show current image with updated fit mode
+            const idx = (this._slideIndex - 1 + this._shuffledImages.length) %
+                this._shuffledImages.length;
+            const entry = this._shuffledImages[idx];
+            if (entry) {
+                this._setSlideImage(entry.path);
+            }
+        }
+
+        // Restart slide timer (interval may have changed)
+        this._startSlideTimer();
+
+        // Shuffle change triggers cache reload
+        if (enabled && this._shuffledImages.length > 0) {
+            this._slideIndex = 0;
+        }
+
+        console.log(
+            `[desktop-rss-wall] slideshow → enabled=${enabled} ` +
+            `fit=${this._settings.get_string('slideshow-fit-mode')} ` +
+            `dim=${this._settings.get_double('dim-overlay-opacity')}`,
+        );
     }
 
     // ======================================================================
@@ -225,14 +604,15 @@ export default class DesktopRssWallExtension extends Extension {
             const feedFile = Gio.File.new_for_path(FEED_CACHE_PATH);
             this._feedMonitor = feedFile.monitor_file(
                 Gio.FileMonitorFlags.NONE,
-                null,  // cancellable
+                null,
             );
             this._feedMonitorId = this._feedMonitor.connect(
                 'changed',
                 (_monitor, _file, _otherFile, eventType) => {
-                    // CHANGED = 0, CHANGES_DONE_HINT = 1, DELETED = 2, CREATED = 3
-                    if (eventType === Gio.FileMonitorEvent.CHANGES_DONE_HINT ||
-                        eventType === Gio.FileMonitorEvent.CREATED) {
+                    if (
+                        eventType === Gio.FileMonitorEvent.CHANGES_DONE_HINT ||
+                        eventType === Gio.FileMonitorEvent.CREATED
+                    ) {
                         console.log('[desktop-rss-wall] feed.json changed — reloading');
                         this._loadRssCache();
                     }
@@ -302,7 +682,6 @@ export default class DesktopRssWallExtension extends Extension {
             return;
         }
 
-        // If the helper wrote an error, show it gracefully
         if (data.error) {
             console.log(`[desktop-rss-wall] feed cache error: ${data.error}`);
             this._renderRssFallback(`Feed unavailable.\n${data.error}`);
@@ -319,18 +698,13 @@ export default class DesktopRssWallExtension extends Extension {
         this._renderRssItems(title, items);
     }
 
-    /**
-     * Render the RSS panel with a feed title and list of items.
-     */
     _renderRssItems(title, items) {
-        // Clear old item labels
         for (const label of this._rssItemLabels) {
             this._rssBox.remove_child(label);
             label.destroy();
         }
         this._rssItemLabels = [];
 
-        // Feed title
         this._rssTitleLabel.text = title;
         this._rssTitleLabel.visible = true;
 
@@ -344,7 +718,7 @@ export default class DesktopRssWallExtension extends Extension {
         }
 
         for (const item of items) {
-            const text = `\u2022 ${item.title}`;  // bullet
+            const text = `\u2022 ${item.title}`;
             const label = new St.Label({
                 text,
                 style_class: 'desktop-rss-wall-rss-item',
@@ -353,15 +727,10 @@ export default class DesktopRssWallExtension extends Extension {
             this._rssItemLabels.push(label);
         }
 
-        // Re-apply font styling to all labels
         this._applyRssFontStyle();
     }
 
-    /**
-     * Render fallback text when feed cache is missing or in error state.
-     */
     _renderRssFallback(message) {
-        // Clear old item labels
         for (const label of this._rssItemLabels) {
             this._rssBox.remove_child(label);
             label.destroy();
@@ -388,7 +757,6 @@ export default class DesktopRssWallExtension extends Extension {
     _applyRssSettings() {
         if (!this._settings || !this._rssActor) return;
 
-        // Visibility
         const enabled = this._settings.get_boolean('rss-enabled');
         this._rssActor.visible = enabled;
         if (!enabled) {
@@ -396,35 +764,29 @@ export default class DesktopRssWallExtension extends Extension {
             return;
         }
 
-        // Position
         this._rssActor.x = this._settings.get_int('rss-x');
         this._rssActor.y = this._settings.get_int('rss-y');
 
-        // Width / height on the container box
         const width = this._settings.get_int('rss-width');
         const height = this._settings.get_int('rss-height');
         this._rssBox.width = width;
         this._rssBox.height = height;
 
-        // Opacity
         this._rssActor.opacity = Math.round(
             this._settings.get_double('rss-opacity') * 255,
         );
 
-        // Font & color (inline style on labels)
         this._applyRssFontStyle();
 
-        // Background box
         const bgEnabled = this._settings.get_boolean('rss-background-enabled');
         const bgColor = this._settings.get_string('rss-background-color');
         const bgOpacity = this._settings.get_double('rss-background-opacity');
 
         if (bgEnabled) {
             const {r, g, b} = this._hexToRgb(bgColor);
-            const bgCornerRadius = 8;
             this._rssBin.style = [
                 `background-color: rgba(${r}, ${g}, ${b}, ${bgOpacity});`,
-                `border-radius: ${bgCornerRadius}px;`,
+                'border-radius: 8px;',
                 'padding: 12px 16px;',
             ].join(' ');
         } else {
@@ -450,12 +812,10 @@ export default class DesktopRssWallExtension extends Extension {
             `color: ${fontColor};`,
         ].join(' ');
 
-        // Title label
         if (this._rssTitleLabel) {
             this._rssTitleLabel.style = style;
         }
 
-        // Item/fallback labels
         for (const label of this._rssItemLabels) {
             label.style = style;
         }
@@ -493,7 +853,7 @@ export default class DesktopRssWallExtension extends Extension {
     }
 
     // ======================================================================
-    //  Clock — GSettings applier (position, appearance, visibility)
+    //  Clock — GSettings applier
     // ======================================================================
 
     _applyClockSettings() {

@@ -1,7 +1,7 @@
 /**
  * Desktop RSS Wall — Stylesheet
  *
- * Milestone 5: RSS panel with title, item list, and fallback states.
+ * Milestone 7: Slideshow layer, dim overlay, RSS panel, and clock.
  * Font family, size, and color are driven by GSettings via inline
  * styles in extension.js.  This stylesheet provides structural
  * defaults and text-shadow for readability over wallpaper/slideshow.
@@ -9,6 +9,18 @@
 
 .desktop-rss-wall-root {
 }
+
+/* ── Slideshow Layer ────────────────────────────────────────────── */
+
+.desktop-rss-wall-slideshow {
+    /* Full-screen slideshow container — background is Clutter content */
+}
+
+/* ── Dim Overlay ────────────────────────────────────────────────── */
+
+/* The dim overlay is a solid black actor whose opacity is set
+   from GSettings (dim-overlay-opacity).  No CSS needed — inline
+   background_color and opacity cover it. */
 
 /* ── RSS Panel ─────────────────────────────────────────────────── */
 
