@@ -51,5 +51,5 @@ Extend to 47-50 as testing confirms compatibility.
 
 See `desktop-rss-wall-design.md` for the full milestone plan (0-10).
 
-Current: Milestone 2 (GSettings + Preferences Basics) — complete.
-Next: Milestone 3 (Clock Widget).
+Current: Milestone 4 (RSS Helper and Cache) — complete.
+Next: Milestone 5 (RSS Display).

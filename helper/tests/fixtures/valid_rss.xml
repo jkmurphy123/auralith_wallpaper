@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Example News Feed</title>
+    <link>https://example.com</link>
+    <description>Test RSS feed for unit tests</description>
+    <language>en-us</language>
+    <lastBuildDate>Wed, 14 May 2026 12:00:00 -0400</lastBuildDate>
+
+    <item>
+      <title>First Test Article</title>
+      <link>https://example.com/article-1</link>
+      <guid isPermaLink="true">https://example.com/article-1</guid>
+      <pubDate>Wed, 14 May 2026 10:30:00 -0400</pubDate>
+      <description>Summary of the first test article.</description>
+    </item>
+
+    <item>
+      <title>Second Test Article</title>
+      <link>https://example.com/article-2</link>
+      <guid isPermaLink="true">https://example.com/article-2</guid>
+      <pubDate>Tue, 13 May 2026 15:45:00 -0400</pubDate>
+      <description>Summary of the second test article.</description>
+    </item>
+
+    <item>
+      <title>Third Article with No Description</title>
+      <link>https://example.com/article-3</link>
+      <guid isPermaLink="true">https://example.com/article-3</guid>
+      <pubDate>Mon, 12 May 2026 09:00:00 -0400</pubDate>
+    </item>
+
+    <item>
+      <title>Fourth Test Article</title>
+      <link>https://example.com/article-4</link>
+      <guid isPermaLink="true">https://example.com/article-4</guid>
+      <pubDate>Sun, 11 May 2026 20:00:00 -0400</pubDate>
+      <description>Summary of the fourth article.</description>
+    </item>
+
+    <item>
+      <title>Fifth Test Article</title>
+      <link>https://example.com/article-5</link>
+      <guid isPermaLink="true">https://example.com/article-5</guid>
+      <pubDate>Sat, 10 May 2026 12:00:00 -0400</pubDate>
+      <description>Summary of the fifth article.</description>
+    </item>
+
+    <item>
+      <title>Sixth Article (beyond default max_items)</title>
+      <link>https://example.com/article-6</link>
+      <guid isPermaLink="true">https://example.com/article-6</guid>
+      <pubDate>Fri, 09 May 2026 08:00:00 -0400</pubDate>
+      <description>This should not appear when max_items=5</description>
+    </item>
+
+  </channel>
+</rss>
