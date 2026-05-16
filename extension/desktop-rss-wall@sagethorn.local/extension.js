@@ -304,16 +304,26 @@ export default class DesktopRssWallExtension extends Extension {
     _loadImageCache() {
         if (!this._slideshowContent) return;
 
-        const [ok, contents] = GLib.file_get_contents(IMAGE_CACHE_PATH);
-
-        if (!ok) {
+        // Check existence first to avoid GLib.FileError noise in logs
+        if (!GLib.file_test(IMAGE_CACHE_PATH, GLib.FileTest.EXISTS)) {
             console.log('[desktop-rss-wall] images.json not found — no slideshow');
             this._shuffledImages = [];
             this._slideIndex = 0;
             this._clearSlide();
+            this._applySlideshowSettings();
             return;
         }
 
+        const [ok, contents] = GLib.file_get_contents(IMAGE_CACHE_PATH);
+
+        if (!ok) {
+            console.log('[desktop-rss-wall] images.json unreadable — no slideshow');
+            this._shuffledImages = [];
+            this._slideIndex = 0;
+            this._clearSlide();
+            this._applySlideshowSettings();
+            return;
+        }
         let data;
         try {
             data = JSON.parse(imports.byteArray.toString(contents));
@@ -423,8 +433,14 @@ export default class DesktopRssWallExtension extends Extension {
         );
     }
 
-    _advanceSlide() {
+    _advanceSlide(startingIndex) {
         if (!this._shuffledImages || this._shuffledImages.length === 0) return;
+
+        // Guard against infinite recursion when all images are missing/broken.
+        // Track the index we started at so we stop after trying every image once.
+        if (startingIndex === undefined) {
+            startingIndex = this._slideIndex;
+        }
 
         const entry = this._shuffledImages[this._slideIndex];
         this._slideIndex = (this._slideIndex + 1) % this._shuffledImages.length;
@@ -433,8 +449,13 @@ export default class DesktopRssWallExtension extends Extension {
 
         if (!success) {
             console.log(`[desktop-rss-wall] skipping missing image: ${entry.path}`);
-            // Try the next one immediately
-            this._advanceSlide();
+            // Only try the next one if we haven't looped through every image
+            if (this._slideIndex !== startingIndex) {
+                this._advanceSlide(startingIndex);
+            } else {
+                console.log('[desktop-rss-wall] all images missing — clearing slideshow');
+                this._clearSlide();
+            }
         }
     }
 
@@ -665,11 +686,18 @@ export default class DesktopRssWallExtension extends Extension {
     // ======================================================================
 
     _loadRssCache() {
+        // Check existence first to avoid GLib.FileError noise in logs
+        if (!GLib.file_test(FEED_CACHE_PATH, GLib.FileTest.EXISTS)) {
+            console.log('[desktop-rss-wall] feed.json not found — showing placeholder');
+            this._renderRssFallback('No feed cache yet.\nRun desktop-rss-wall-helper refresh');
+            return;
+        }
+
         const [ok, contents] = GLib.file_get_contents(FEED_CACHE_PATH);
 
         if (!ok) {
-            console.log('[desktop-rss-wall] feed.json not found — showing placeholder');
-            this._renderRssFallback('No feed cache yet.\nRun desktop-rss-wall-helper fetch-rss');
+            console.log('[desktop-rss-wall] feed.json unreadable — showing placeholder');
+            this._renderRssFallback('Cannot read feed cache.');
             return;
         }
 

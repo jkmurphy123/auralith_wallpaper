@@ -42,10 +42,10 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
         settings.bind('rss-enabled', rssEnabled, 'active', BIND);
         rssGeneralGroup.add(rssEnabled);
 
-        const rssUrl = new Adw.EntryRow({
-            title: 'Feed URL',
-            subtitle: 'Full URL to an RSS or Atom feed',
-        });
+        const rssUrl = this._entryRow(
+            'Feed URL',
+            'Full URL to an RSS or Atom feed',
+        );
         settings.bind('rss-feed-url', rssUrl, 'text', BIND);
         rssGeneralGroup.add(rssUrl);
 
@@ -93,10 +93,10 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
         const rssAppearanceGroup = new Adw.PreferencesGroup({title: 'Appearance'});
         rssPage.add(rssAppearanceGroup);
 
-        const rssFontFamily = new Adw.EntryRow({
-            title: 'Font Family',
-            subtitle: 'Font name, e.g. DejaVu Sans',
-        });
+        const rssFontFamily = this._entryRow(
+            'Font Family',
+            'Font name, e.g. DejaVu Sans',
+        );
         settings.bind('rss-font-family', rssFontFamily, 'text', BIND);
         rssAppearanceGroup.add(rssFontFamily);
 
@@ -104,10 +104,10 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
         settings.bind('rss-font-size', rssFontSize, 'value', BIND);
         rssAppearanceGroup.add(rssFontSize);
 
-        const rssFontColor = new Adw.EntryRow({
-            title: 'Font Color',
-            subtitle: 'Hex color, e.g. #ffffff',
-        });
+        const rssFontColor = this._entryRow(
+            'Font Color',
+            'Hex color, e.g. #ffffff',
+        );
         settings.bind('rss-font-color', rssFontColor, 'text', BIND);
         rssAppearanceGroup.add(rssFontColor);
 
@@ -130,10 +130,10 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
         settings.bind('rss-background-enabled', rssBgEnabled, 'active', BIND);
         rssBgGroup.add(rssBgEnabled);
 
-        const rssBgColor = new Adw.EntryRow({
-            title: 'Background Color',
-            subtitle: 'Hex color, e.g. #000000',
-        });
+        const rssBgColor = this._entryRow(
+            'Background Color',
+            'Hex color, e.g. #000000',
+        );
         settings.bind('rss-background-color', rssBgColor, 'text', BIND);
         rssBgGroup.add(rssBgColor);
 
@@ -181,17 +181,17 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
         const clockAppearanceGroup = new Adw.PreferencesGroup({title: 'Appearance'});
         clockPage.add(clockAppearanceGroup);
 
-        const clockFormat = new Adw.EntryRow({
-            title: 'Date/Time Format',
-            subtitle: 'strftime format, e.g. %A, %B %-d, %Y  %I:%M %p',
-        });
+        const clockFormat = this._entryRow(
+            'Date/Time Format',
+            'strftime format, e.g. %A, %B %-d, %Y  %I:%M %p',
+        );
         settings.bind('clock-format', clockFormat, 'text', BIND);
         clockAppearanceGroup.add(clockFormat);
 
-        const clockFontFamily = new Adw.EntryRow({
-            title: 'Font Family',
-            subtitle: 'Font name, e.g. DejaVu Sans Mono',
-        });
+        const clockFontFamily = this._entryRow(
+            'Font Family',
+            'Font name, e.g. DejaVu Sans Mono',
+        );
         settings.bind('clock-font-family', clockFontFamily, 'text', BIND);
         clockAppearanceGroup.add(clockFontFamily);
 
@@ -199,10 +199,10 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
         settings.bind('clock-font-size', clockFontSize, 'value', BIND);
         clockAppearanceGroup.add(clockFontSize);
 
-        const clockFontColor = new Adw.EntryRow({
-            title: 'Font Color',
-            subtitle: 'Hex color, e.g. #ffffff',
-        });
+        const clockFontColor = this._entryRow(
+            'Font Color',
+            'Hex color, e.g. #ffffff',
+        );
         settings.bind('clock-font-color', clockFontColor, 'text', BIND);
         clockAppearanceGroup.add(clockFontColor);
 
@@ -225,10 +225,10 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
         settings.bind('clock-background-enabled', clockBgEnabled, 'active', BIND);
         clockBgGroup.add(clockBgEnabled);
 
-        const clockBgColor = new Adw.EntryRow({
-            title: 'Background Color',
-            subtitle: 'Hex color, e.g. #000000',
-        });
+        const clockBgColor = this._entryRow(
+            'Background Color',
+            'Hex color, e.g. #000000',
+        );
         settings.bind('clock-background-color', clockBgColor, 'text', BIND);
         clockBgGroup.add(clockBgColor);
 
@@ -260,10 +260,10 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
         settings.bind('slideshow-enabled', slideEnabled, 'active', BIND);
         slideGeneralGroup.add(slideEnabled);
 
-        const slideFolder = new Adw.EntryRow({
-            title: 'Image Folder',
-            subtitle: 'Path to a folder containing images',
-        });
+        const slideFolder = this._entryRow(
+            'Image Folder',
+            'Path to a folder containing images',
+        );
         settings.bind('slideshow-folder', slideFolder, 'text', BIND);
         slideGeneralGroup.add(slideFolder);
 
@@ -332,6 +332,28 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
         );
         settings.bind('dim-overlay-opacity', dimOverlayOpacity, 'value', BIND);
         slideAppearanceGroup.add(dimOverlayOpacity);
+    }
+
+    /**
+     * Create an entry row with title + subtitle.
+     *
+     * Adw.EntryRow's subtitle property is not available in some libadwaita
+     * builds (the Ubuntu 1.5.0-1ubuntu2 package was cut before upstream
+     * added it).  Compose Adw.ActionRow + Gtk.Entry as a workaround.
+     * A synthetic 'text' property proxies to the inner Gtk.Entry so
+     * GSettings.bind('key', row, 'text') keeps working.
+     */
+    _entryRow(title, subtitle) {
+        const row = new Adw.ActionRow({title, subtitle});
+        const entry = new Gtk.Entry({valign: Gtk.Align.CENTER});
+        row.add_suffix(entry);
+        row.activatable_widget = entry;
+        Object.defineProperty(row, 'text', {
+            get() { return entry.text; },
+            set(val) { entry.text = val; },
+        });
+        entry.connect('notify::text', () => { row.notify('text'); });
+        return row;
     }
 
     /**
