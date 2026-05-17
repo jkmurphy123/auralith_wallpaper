@@ -10,6 +10,7 @@ import GLib from 'gi://GLib';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import GdkPixbuf from 'gi://GdkPixbuf';
+import Pango from 'gi://Pango';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
@@ -32,6 +33,8 @@ export default class DesktopRssWallExtension extends Extension {
         this._imageMonitorId = 0;
         this._rssRefreshTimerId = 0;
         this._rssItemLabels = [];
+        this._rssSummaryLabels = [];
+        this._storyFileIndex = 0;
         this._slideTimerId = 0;
         this._slideIndex = 0;
         this._shuffledImages = [];
@@ -164,17 +167,29 @@ export default class DesktopRssWallExtension extends Extension {
 
         // --- Connect change signals for live updates ---
 
-        // RSS keys
-        const rssKeys = [
+        // RSS visual keys
+        const rssVisualKeys = [
             'rss-x', 'rss-y', 'rss-width', 'rss-height', 'rss-opacity',
-            'rss-enabled', 'rss-max-items',
+            'rss-enabled',
             'rss-font-family', 'rss-font-size', 'rss-font-color',
             'rss-background-enabled', 'rss-background-color', 'rss-background-opacity',
         ];
-        for (const key of rssKeys) {
+        for (const key of rssVisualKeys) {
             const id = this._settings.connect(
                 `changed::${key}`,
                 () => this._applyRssSettings(),
+            );
+            this._signalIds.push(id);
+        }
+
+        // RSS content keys — trigger full reload (source, URL, folder, max items)
+        const rssContentKeys = [
+            'rss-source-mode', 'rss-feed-url', 'rss-file-folder', 'rss-max-items',
+        ];
+        for (const key of rssContentKeys) {
+            const id = this._settings.connect(
+                `changed::${key}`,
+                () => this._loadRssCache(),
             );
             this._signalIds.push(id);
         }
@@ -233,8 +248,13 @@ export default class DesktopRssWallExtension extends Extension {
             },
         );
 
-        // --- Add to desktop UI layer ---
-        Main.layoutManager.uiGroup.add_child(this._rootActor);
+        // --- Add to desktop layer (above wallpaper, below windows) ---
+        // Insert at index 0 of window_group: above the Meta.BackgroundActor
+        // that draws the system wallpaper, but below all Meta.WindowActors
+        // (normal application windows). On Wayland, Meta.WindowActors render
+        // on top regardless of Clutter Z-order within the group, so our actor
+        // naturally stays behind all windows.
+        global.window_group.insert_child_at_index(this._rootActor, 0);
 
         console.log('[desktop-rss-wall] actors placed on desktop');
     }
@@ -271,7 +291,7 @@ export default class DesktopRssWallExtension extends Extension {
 
         // Remove actors
         if (this._rootActor) {
-            Main.layoutManager.uiGroup.remove_child(this._rootActor);
+            global.window_group.remove_child(this._rootActor);
             this._rootActor.destroy();
             this._rootActor = null;
             this._slideshowBin = null;
@@ -282,6 +302,7 @@ export default class DesktopRssWallExtension extends Extension {
             this._rssBox = null;
             this._rssTitleLabel = null;
             this._rssItemLabels = [];
+            this._rssSummaryLabels = [];
             this._clockActor = null;
             this._clockBin = null;
             this._clockLabel = null;
@@ -324,6 +345,7 @@ export default class DesktopRssWallExtension extends Extension {
             this._applySlideshowSettings();
             return;
         }
+
         let data;
         try {
             data = JSON.parse(imports.byteArray.toString(contents));
@@ -332,6 +354,7 @@ export default class DesktopRssWallExtension extends Extension {
             this._shuffledImages = [];
             this._slideIndex = 0;
             this._clearSlide();
+            this._applySlideshowSettings();
             return;
         }
 
@@ -340,6 +363,7 @@ export default class DesktopRssWallExtension extends Extension {
             this._shuffledImages = [];
             this._slideIndex = 0;
             this._clearSlide();
+            this._applySlideshowSettings();
             return;
         }
 
@@ -350,6 +374,7 @@ export default class DesktopRssWallExtension extends Extension {
             this._shuffledImages = [];
             this._slideIndex = 0;
             this._clearSlide();
+            this._applySlideshowSettings();
             return;
         }
 
@@ -365,6 +390,7 @@ export default class DesktopRssWallExtension extends Extension {
         this._slideIndex = 0;
         console.log(`[desktop-rss-wall] loaded ${images.length} image(s), shuffle=${shuffle}`);
         this._advanceSlide();
+        this._applySlideshowSettings();
     }
 
     // ======================================================================
@@ -577,9 +603,10 @@ export default class DesktopRssWallExtension extends Extension {
             this._slideshowBin.visible = enabled;
         }
 
-        // Dim overlay: only show when slideshow is enabled
+        // Dim overlay: only show when slideshow is enabled AND images are loaded
         if (this._dimOverlay) {
-            this._dimOverlay.visible = enabled;
+            const hasImages = this._shuffledImages && this._shuffledImages.length > 0;
+            this._dimOverlay.visible = enabled && hasImages;
             const dimOpacity = this._settings.get_double('dim-overlay-opacity');
             this._dimOverlay.opacity = Math.round(dimOpacity * 255);
         }
@@ -686,6 +713,16 @@ export default class DesktopRssWallExtension extends Extension {
     // ======================================================================
 
     _loadRssCache() {
+        const sourceMode = this._settings
+            ? this._settings.get_string('rss-source-mode')
+            : 'feed';
+
+        if (sourceMode === 'file') {
+            this._loadStoryFiles();
+            return;
+        }
+
+        // Feed mode: read from helper-generated feed.json cache
         // Check existence first to avoid GLib.FileError noise in logs
         if (!GLib.file_test(FEED_CACHE_PATH, GLib.FileTest.EXISTS)) {
             console.log('[desktop-rss-wall] feed.json not found — showing placeholder');
@@ -726,12 +763,123 @@ export default class DesktopRssWallExtension extends Extension {
         this._renderRssItems(title, items);
     }
 
+    /**
+     * File source mode: read JSON story files directly from the configured
+     * folder, bypassing the helper cache.  Each .json file contains a batch
+     * of stories (one file per date).  We display the most recent file.
+     */
+    _loadStoryFiles() {
+        if (!this._settings) return;
+
+        let folder = this._settings.get_string('rss-file-folder');
+        if (!folder) {
+            this._renderRssFallback('No story file folder configured.\nSet it in extension preferences.');
+            return;
+        }
+
+        // Expand ~ to home directory
+        if (folder.startsWith('~')) {
+            folder = GLib.get_home_dir() + folder.substring(1);
+        }
+
+        const dir = Gio.File.new_for_path(folder);
+        if (!dir.query_exists(null)) {
+            this._renderRssFallback(`Story folder not found:\n${folder}`);
+            return;
+        }
+
+        // Enumerate .json files, sorted by name
+        let files = [];
+        try {
+            const enumerator = dir.enumerate_children(
+                'standard::name',
+                Gio.FileQueryInfoFlags.NONE,
+                null,
+            );
+            let info;
+            while ((info = enumerator.next_file(null))) {
+                const name = info.get_name();
+                if (name.endsWith('.json') && info.get_file_type() === Gio.FileType.REGULAR) {
+                    files.push(name);
+                }
+            }
+            enumerator.close(null);
+        } catch (e) {
+            console.log(`[desktop-rss-wall] story folder read error: ${e}`);
+            this._renderRssFallback(`Cannot read story folder:\n${folder}`);
+            return;
+        }
+
+        files.sort();
+
+        if (files.length === 0) {
+            this._renderRssFallback(`No JSON story files found in:\n${folder}`);
+            return;
+        }
+
+        // Reset index if it's out of bounds (e.g. folder changed, files removed)
+        if (this._storyFileIndex >= files.length) {
+            this._storyFileIndex = 0;
+        }
+
+        // Pick the current file by index (cycling in alphabetical order)
+        const currentFile = files[this._storyFileIndex];
+
+        // Advance to next file for the next refresh (round-robin)
+        this._storyFileIndex = (this._storyFileIndex + 1) % files.length;
+
+        const filePath = GLib.build_filenamev([folder, currentFile]);
+
+        let data;
+        try {
+            const [ok, contents] = GLib.file_get_contents(filePath);
+            if (!ok) {
+                this._renderRssFallback(`Cannot read story file:\n${currentFile}`);
+                return;
+            }
+            data = JSON.parse(imports.byteArray.toString(contents));
+        } catch (e) {
+            console.log(`[desktop-rss-wall] story file parse error (${currentFile}): ${e}`);
+            this._renderRssFallback(`Story file is corrupt:\n${currentFile}`);
+            return;
+        }
+
+        if (!data || typeof data !== 'object') {
+            this._renderRssFallback(`Invalid story file format:\n${currentFile}`);
+            return;
+        }
+
+        const batchDate = data.date || currentFile.replace('.json', '');
+        const stories = data.stories || [];
+
+        const maxItems = this._settings.get_int('rss-max-items');
+        const title = `${batchDate} — file ${this._storyFileIndex}/${files.length}`;
+        const items = stories.slice(0, maxItems).map(story => ({
+            title: story.headline || '(no headline)',
+            summary: story.summary || '',
+        }));
+
+        if (items.length === 0) {
+            this._renderRssFallback(`No stories in:\n${currentFile}`);
+            return;
+        }
+
+        this._renderRssItems(title, items);
+        console.log(`[desktop-rss-wall] loaded ${items.length} story(s) from ${currentFile}`);
+    }
+
     _renderRssItems(title, items) {
+        // Tear down old labels (both headline and summary)
         for (const label of this._rssItemLabels) {
             this._rssBox.remove_child(label);
             label.destroy();
         }
         this._rssItemLabels = [];
+        for (const label of this._rssSummaryLabels) {
+            this._rssBox.remove_child(label);
+            label.destroy();
+        }
+        this._rssSummaryLabels = [];
 
         this._rssTitleLabel.text = title;
         this._rssTitleLabel.visible = true;
@@ -740,19 +888,37 @@ export default class DesktopRssWallExtension extends Extension {
             const emptyLabel = new St.Label({
                 text: '(no items)',
                 style_class: 'desktop-rss-wall-rss-item',
+                x_expand: true,
             });
             this._rssBox.add_child(emptyLabel);
             this._rssItemLabels.push(emptyLabel);
         }
 
         for (const item of items) {
-            const text = `\u2022 ${item.title}`;
-            const label = new St.Label({
-                text,
+            // --- Headline label ---
+            const headlineText = `\u2022 ${item.title}`;
+            const headlineLabel = new St.Label({
+                text: headlineText,
                 style_class: 'desktop-rss-wall-rss-item',
+                x_expand: true,
             });
-            this._rssBox.add_child(label);
-            this._rssItemLabels.push(label);
+            headlineLabel.clutter_text.line_wrap = true;
+            headlineLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+            this._rssBox.add_child(headlineLabel);
+            this._rssItemLabels.push(headlineLabel);
+
+            // --- Body / summary label (below headline) ---
+            if (item.summary) {
+                const bodyLabel = new St.Label({
+                    text: item.summary,
+                    style_class: 'desktop-rss-wall-rss-summary',
+                    x_expand: true,
+                });
+                bodyLabel.clutter_text.line_wrap = true;
+                bodyLabel.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+                this._rssBox.add_child(bodyLabel);
+                this._rssSummaryLabels.push(bodyLabel);
+            }
         }
 
         this._applyRssFontStyle();
@@ -834,18 +1000,30 @@ export default class DesktopRssWallExtension extends Extension {
         const fontSize = this._settings.get_int('rss-font-size');
         const fontColor = this._settings.get_string('rss-font-color');
 
-        const style = [
+        const headlineStyle = [
             `font-family: "${fontFamily}", sans-serif;`,
             `font-size: ${fontSize}px;`,
             `color: ${fontColor};`,
         ].join(' ');
 
+        const summaryFontSize = Math.max(12, fontSize - 4);
+        const summaryStyle = [
+            `font-family: "${fontFamily}", sans-serif;`,
+            `font-size: ${summaryFontSize}px;`,
+            `color: ${fontColor};`,
+            'opacity: 0.75;',
+        ].join(' ');
+
         if (this._rssTitleLabel) {
-            this._rssTitleLabel.style = style;
+            this._rssTitleLabel.style = headlineStyle;
         }
 
         for (const label of this._rssItemLabels) {
-            label.style = style;
+            label.style = headlineStyle;
+        }
+
+        for (const label of this._rssSummaryLabels) {
+            label.style = summaryStyle;
         }
     }
 

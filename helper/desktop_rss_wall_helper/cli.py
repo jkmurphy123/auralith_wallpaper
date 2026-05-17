@@ -23,6 +23,7 @@ import typer
 from .cache import write_json_cache, read_json_cache
 from .image_indexer import index_images as index_image_folder
 from .rss_fetcher import fetch_feed
+from .story_reader import read_story_cache
 
 app = typer.Typer(
     name="desktop-rss-wall-helper",
@@ -75,6 +76,60 @@ def fetch_rss(
     typer.echo(
         f"Fetched {len(cache.items)} items from \"{cache.feed_title}\"\n"
         f"→ {output}"
+    )
+
+
+@app.command()
+def fetch_stories(
+    folder: str = typer.Option(
+        ..., "--folder", help="Folder containing JSON story files",
+    ),
+    output: str = typer.Option(
+        ..., "--output", help="Output JSON cache path (feed.json)",
+    ),
+) -> None:
+    """Read JSON story files from a folder and write a feed.json cache.
+
+    Each invocation advances to the next file in the folder, looping
+    back after the last file.  Stories are mapped to the same FeedCache
+    format the extension already reads, so extension.js needs no changes.
+    """
+    state_path = os.path.join(CACHE_DIR, "story_state.json")
+    state = read_json_cache(state_path) or {}
+
+    cache, new_state = read_story_cache(folder, state)
+
+    if cache.error and not cache.items:
+        # Total failure — preserve existing cache
+        existing = read_json_cache(output)
+        if existing is not None:
+            _write_state_error(cache.error, folder)
+            typer.echo(
+                f"Story fetch FAILED for {folder}: {cache.error}\n"
+                f"Preserving last successful cache at {output}",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        # No existing cache — write error cache
+        typer.echo(
+            f"Story fetch FAILED for {folder}: {cache.error}\n"
+            f"No previous cache exists — writing error state to {output}",
+            err=True,
+        )
+        write_json_cache(output, _cache_to_dict(cache))
+        raise typer.Exit(code=1)
+
+    # Save state for next run
+    write_json_cache(state_path, new_state)
+
+    # Write feed cache
+    write_json_cache(output, _cache_to_dict(cache))
+    typer.echo(
+        f"Loaded {len(cache.items)} stories from "
+        f"\"{cache.feed_title}\"\n"
+        f"→ {output}\n"
+        f"  (next file: {new_state.get('current_file', '?')})",
     )
 
 
@@ -153,36 +208,90 @@ def refresh_all(
     SCHEMA = "org.gnome.shell.extensions.desktop-rss-wall@sagethorn.local"
     errors = []
 
-    # ---- RSS feed ----------------------------------------------------------
-    if not feed_url:
-        feed_url = _read_gsetting_string(SCHEMA, "rss-feed-url", "")
-    if max_items <= 0:
-        max_items = _read_gsetting_int(SCHEMA, "rss-max-items", 5)
+    # ---- Feed / Stories ----------------------------------------------------
+    source_mode = _read_gsetting_string(SCHEMA, "rss-source-mode", "feed").lower()
+    feed_output = os.path.join(CACHE_DIR, "feed.json")
 
-    if not feed_url:
-        typer.echo("⚠  RSS feed URL not set — skipping feed refresh", err=True)
-        errors.append("rss: no feed URL configured")
-    else:
-        feed_output = os.path.join(CACHE_DIR, "feed.json")
-        typer.echo(f"Fetching RSS: {feed_url}  (max {max_items} items)")
+    if source_mode == "file":
+        # ---- File mode: read JSON story files -------------------------------
+        if not feed_url:
+            feed_url = _read_gsetting_string(SCHEMA, "rss-file-folder", "")
 
-        cache = fetch_feed(feed_url, max_items)
-        if cache.error:
-            # Preserve existing cache if possible
-            existing = read_json_cache(feed_output)
-            if existing is not None:
-                typer.echo(f"✗ RSS fetch FAILED: {cache.error}", err=True)
-                typer.echo("  Preserving last successful cache", err=True)
-            else:
-                _write_state_error(cache.error, feed_url)
-                write_json_cache(feed_output, _cache_to_dict(cache))
-                typer.echo(f"✗ RSS fetch FAILED (no prior cache): {cache.error}", err=True)
-            errors.append(f"rss: {cache.error}")
-        else:
-            write_json_cache(feed_output, _cache_to_dict(cache))
+        if not feed_url:
             typer.echo(
-                f"  ✓ {len(cache.items)} items from \"{cache.feed_title}\""
+                "⚠  Story file folder not set — skipping story refresh",
+                err=True,
             )
+            errors.append("stories: no file folder configured")
+        else:
+            typer.echo(f"Reading stories from: {feed_url}")
+
+            state_path = os.path.join(CACHE_DIR, "story_state.json")
+            state = read_json_cache(state_path) or {}
+
+            cache, new_state = read_story_cache(feed_url, state)
+
+            if cache.error and not cache.items:
+                existing = read_json_cache(feed_output)
+                if existing is not None:
+                    typer.echo(
+                        f"✗ Story fetch FAILED: {cache.error}", err=True,
+                    )
+                    typer.echo("  Preserving last successful cache", err=True)
+                else:
+                    write_json_cache(feed_output, _cache_to_dict(cache))
+                    typer.echo(
+                        f"✗ Story fetch FAILED (no prior cache): "
+                        f"{cache.error}",
+                        err=True,
+                    )
+                errors.append(f"stories: {cache.error}")
+            else:
+                write_json_cache(state_path, new_state)
+                write_json_cache(feed_output, _cache_to_dict(cache))
+                typer.echo(
+                    f"  ✓ {len(cache.items)} stories from "
+                    f"\"{cache.feed_title}\""
+                )
+                typer.echo(
+                    f"     next file: {new_state.get('current_file', '?')}"
+                )
+    else:
+        # ---- Feed mode: traditional RSS ------------------------------------
+        if not feed_url:
+            feed_url = _read_gsetting_string(SCHEMA, "rss-feed-url", "")
+        if max_items <= 0:
+            max_items = _read_gsetting_int(SCHEMA, "rss-max-items", 5)
+
+        if not feed_url:
+            typer.echo(
+                "⚠  RSS feed URL not set — skipping feed refresh", err=True,
+            )
+            errors.append("rss: no feed URL configured")
+        else:
+            typer.echo(f"Fetching RSS: {feed_url}  (max {max_items} items)")
+
+            cache = fetch_feed(feed_url, max_items)
+            if cache.error:
+                existing = read_json_cache(feed_output)
+                if existing is not None:
+                    typer.echo(f"✗ RSS fetch FAILED: {cache.error}", err=True)
+                    typer.echo("  Preserving last successful cache", err=True)
+                else:
+                    _write_state_error(cache.error, feed_url)
+                    write_json_cache(feed_output, _cache_to_dict(cache))
+                    typer.echo(
+                        f"✗ RSS fetch FAILED (no prior cache): "
+                        f"{cache.error}",
+                        err=True,
+                    )
+                errors.append(f"rss: {cache.error}")
+            else:
+                write_json_cache(feed_output, _cache_to_dict(cache))
+                typer.echo(
+                    f"  ✓ {len(cache.items)} items from "
+                    f"\"{cache.feed_title}\""
+                )
 
     # ---- Image index -------------------------------------------------------
     if not image_folder:

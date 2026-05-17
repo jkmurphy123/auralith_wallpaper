@@ -11,6 +11,14 @@
       <default>"https://example.com/feed.xml"</default>
       <summary>RSS feed URL</summary>
     </key>
+    <key name="rss-source-mode" type="s">
+      <default>"feed"</default>
+      <summary>RSS source mode: feed (URL) or file (JSON story folder)</summary>
+    </key>
+    <key name="rss-file-folder" type="s">
+      <default>""</default>
+      <summary>Folder containing JSON story files (used when source mode is 'file')</summary>
+    </key>
     <key name="rss-refresh-minutes" type="i">
       <default>15</default>
       <summary>RSS refresh interval in minutes</summary>

@@ -2,7 +2,7 @@
  * Desktop RSS Wall — Full Preferences UI
  *
  * Milestone 8: Complete settings for RSS, Clock, and Slideshow.
- * All values bound to GSettings via settings.bind() / bind_with_mapping().
+ * All values bound to GSettings via settings.bind() / _bindComboMapping().
  */
 import Adw from 'gi://Adw';
 import Gtk from 'gi://Gtk';
@@ -42,12 +42,28 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
         settings.bind('rss-enabled', rssEnabled, 'active', BIND);
         rssGeneralGroup.add(rssEnabled);
 
+        const SOURCE_MODES = ['feed', 'file'];
+        const rssSourceMode = this._comboRow(
+            'Source Mode',
+            'feed = traditional RSS/Atom URL, file = JSON story folder',
+            SOURCE_MODES,
+        );
+        this._bindComboMapping(settings, 'rss-source-mode', rssSourceMode, SOURCE_MODES);
+        rssGeneralGroup.add(rssSourceMode);
+
         const rssUrl = this._entryRow(
             'Feed URL',
             'Full URL to an RSS or Atom feed',
+            settings, 'rss-feed-url',
         );
-        settings.bind('rss-feed-url', rssUrl, 'text', BIND);
         rssGeneralGroup.add(rssUrl);
+
+        const rssFileFolder = this._entryRow(
+            'Story File Folder',
+            'Path to a folder containing JSON story files (one .json per date)',
+            settings, 'rss-file-folder',
+        );
+        rssGeneralGroup.add(rssFileFolder);
 
         const rssRefresh = this._spinRow(
             'Refresh Interval',
@@ -96,8 +112,8 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
         const rssFontFamily = this._entryRow(
             'Font Family',
             'Font name, e.g. DejaVu Sans',
+            settings, 'rss-font-family',
         );
-        settings.bind('rss-font-family', rssFontFamily, 'text', BIND);
         rssAppearanceGroup.add(rssFontFamily);
 
         const rssFontSize = this._spinRow('Font Size', 'Feed text size in points', 6, 200, 1);
@@ -107,8 +123,8 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
         const rssFontColor = this._entryRow(
             'Font Color',
             'Hex color, e.g. #ffffff',
+            settings, 'rss-font-color',
         );
-        settings.bind('rss-font-color', rssFontColor, 'text', BIND);
         rssAppearanceGroup.add(rssFontColor);
 
         const rssOpacity = this._spinRowFloat(
@@ -133,8 +149,8 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
         const rssBgColor = this._entryRow(
             'Background Color',
             'Hex color, e.g. #000000',
+            settings, 'rss-background-color',
         );
-        settings.bind('rss-background-color', rssBgColor, 'text', BIND);
         rssBgGroup.add(rssBgColor);
 
         const rssBgOpacity = this._spinRowFloat(
@@ -184,15 +200,15 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
         const clockFormat = this._entryRow(
             'Date/Time Format',
             'strftime format, e.g. %A, %B %-d, %Y  %I:%M %p',
+            settings, 'clock-format',
         );
-        settings.bind('clock-format', clockFormat, 'text', BIND);
         clockAppearanceGroup.add(clockFormat);
 
         const clockFontFamily = this._entryRow(
             'Font Family',
             'Font name, e.g. DejaVu Sans Mono',
+            settings, 'clock-font-family',
         );
-        settings.bind('clock-font-family', clockFontFamily, 'text', BIND);
         clockAppearanceGroup.add(clockFontFamily);
 
         const clockFontSize = this._spinRow('Font Size', 'Clock font size in points', 8, 200, 1);
@@ -202,8 +218,8 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
         const clockFontColor = this._entryRow(
             'Font Color',
             'Hex color, e.g. #ffffff',
+            settings, 'clock-font-color',
         );
-        settings.bind('clock-font-color', clockFontColor, 'text', BIND);
         clockAppearanceGroup.add(clockFontColor);
 
         const clockOpacity = this._spinRowFloat(
@@ -228,8 +244,8 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
         const clockBgColor = this._entryRow(
             'Background Color',
             'Hex color, e.g. #000000',
+            settings, 'clock-background-color',
         );
-        settings.bind('clock-background-color', clockBgColor, 'text', BIND);
         clockBgGroup.add(clockBgColor);
 
         const clockBgOpacity = this._spinRowFloat(
@@ -263,8 +279,8 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
         const slideFolder = this._entryRow(
             'Image Folder',
             'Path to a folder containing images',
+            settings, 'slideshow-folder',
         );
-        settings.bind('slideshow-folder', slideFolder, 'text', BIND);
         slideGeneralGroup.add(slideFolder);
 
         const slideSubfolders = new Adw.SwitchRow({
@@ -306,23 +322,7 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
             'How images are sized to the screen',
             FIT_MODES,
         );
-        settings.bind_with_mapping(
-            'slideshow-fit-mode',
-            slideFitMode,
-            'selected',
-            Gio.SettingsBindFlags.DEFAULT,
-            // get: GSettings string → ComboRow index
-            (value) => {
-                const str = value.get_string();
-                const idx = FIT_MODES.indexOf(str);
-                return new GLib.Variant('i', idx >= 0 ? idx : 0);
-            },
-            // set: ComboRow index → GSettings string
-            (value) => {
-                const idx = value.get_int32();
-                return new GLib.Variant('s', FIT_MODES[idx] || FIT_MODES[0]);
-            },
-        );
+        this._bindComboMapping(settings, 'slideshow-fit-mode', slideFitMode, FIT_MODES);
         slideAppearanceGroup.add(slideFitMode);
 
         const dimOverlayOpacity = this._spinRowFloat(
@@ -340,10 +340,15 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
      * Adw.EntryRow's subtitle property is not available in some libadwaita
      * builds (the Ubuntu 1.5.0-1ubuntu2 package was cut before upstream
      * added it).  Compose Adw.ActionRow + Gtk.Entry as a workaround.
-     * A synthetic 'text' property proxies to the inner Gtk.Entry so
-     * GSettings.bind('key', row, 'text') keeps working.
+     *
+     * If settings + key are provided, two-way bind the entry text
+     * to the GSettings key via signals.  GSettings.bind() cannot bind
+     * to synthetic JS properties — it requires real GObject properties.
+     *
+     * Usage:
+     *   const row = this._entryRow('Title', 'Subtitle', settings, 'key');
      */
-    _entryRow(title, subtitle) {
+    _entryRow(title, subtitle, settings, key) {
         const row = new Adw.ActionRow({title, subtitle});
         const entry = new Gtk.Entry({valign: Gtk.Align.CENTER});
         row.add_suffix(entry);
@@ -353,6 +358,23 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
             set(val) { entry.text = val; },
         });
         entry.connect('notify::text', () => { row.notify('text'); });
+
+        if (settings && key) {
+            // Read initial value from GSettings
+            entry.text = settings.get_string(key);
+            // Entry changed → write to GSettings
+            entry.connect('notify::text', () => {
+                if (settings.get_string(key) !== entry.text)
+                    settings.set_string(key, entry.text);
+            });
+            // GSettings changed externally → update entry
+            settings.connect(`changed::${key}`, () => {
+                const val = settings.get_string(key);
+                if (entry.text !== val)
+                    entry.text = val;
+            });
+        }
+
         return row;
     }
 
@@ -388,6 +410,35 @@ export default class DesktopRssWallPreferences extends ExtensionPreferences {
             title,
             subtitle,
             model,
+        });
+    }
+
+    /**
+     * Bind a GSettings string key ↔ Adw.ComboRow selected index
+     * using a choices array as the mapping table.
+     *
+     * Gio.Settings.bind_with_mapping() does not exist in GJS 1.80.2
+     * (GNOME 46), so we implement two-way binding manually via signals.
+     */
+    _bindComboMapping(settings, key, comboRow, choices) {
+        // Read initial value from GSettings → set combo index
+        const initial = settings.get_string(key);
+        const idx = choices.indexOf(initial);
+        comboRow.selected = idx >= 0 ? idx : 0;
+
+        // ComboRow changed → write to GSettings
+        comboRow.connect('notify::selected', () => {
+            const val = choices[comboRow.selected] || choices[0];
+            if (settings.get_string(key) !== val)
+                settings.set_string(key, val);
+        });
+
+        // GSettings changed externally → update ComboRow
+        settings.connect(`changed::${key}`, () => {
+            const str = settings.get_string(key);
+            const i = choices.indexOf(str);
+            if (i >= 0 && comboRow.selected !== i)
+                comboRow.selected = i;
         });
     }
 }
